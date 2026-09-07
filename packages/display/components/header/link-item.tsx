@@ -16,8 +16,12 @@ export const LinkItem = defineComponent({
   },
   setup(props) {
     const route = useRoute();
-    // 前缀匹配：/display/ifco 及 /display/ifco/detail 等子路径都点亮
-    const isActive = computed(() => route.path === props.to || route.path.startsWith(`${props.to}/`));
+    // 按一级模块前缀点亮：to 形如 /模块/overview/index，取首段（如 /ifco），
+    // 该模块下任意页面（如 /ifco/effect-fill/list）都点亮对应导航项
+    const modulePrefix = `/${props.to.split('/')[1] ?? ''}`;
+    const isActive = computed(
+      () => route.path === modulePrefix || route.path.startsWith(`${modulePrefix}/`),
+    );
     const isHover = ref(false);
 
     // 优先级：active 恒显示 active 图；非 active 时 hover 显示 hover 图；否则默认图
