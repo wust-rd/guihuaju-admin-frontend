@@ -122,8 +122,8 @@ export function splitTags(text?: string): string[] {
     .filter(Boolean);
 }
 
-/** 后端政策行 → 前端实体(snake→camel) */
-function mapPolicy(row: Recordable): Policy {
+/** 后端政策行 → 前端实体(snake→camel);导出供 qa.ts 复用(chat 引用的 document 同结构) */
+export function mapPolicy(row: Recordable): Policy {
   return {
     id: row.policy_id,
     code: row.policy_id,
