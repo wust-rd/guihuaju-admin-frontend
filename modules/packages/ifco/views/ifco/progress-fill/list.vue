@@ -261,7 +261,7 @@
     const tab = currentTab(leaf.key);
     if (!tab) return;
     totalEditKey.value = indicatorKey;
-    totalInput.value = tab.totals[indicatorKey];
+    totalInput.value = tab.totals?.[indicatorKey];
     totalModalOpen.value = true;
   }
 
@@ -271,6 +271,7 @@
     if (!leaf || !key) return;
     const tab = currentTab(leaf.key);
     if (!tab) return;
+    if (!tab.totals) tab.totals = {};
     if (totalInput.value === undefined || totalInput.value === null) {
       delete tab.totals[key];
     } else {

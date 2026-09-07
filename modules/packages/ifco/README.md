@@ -10,14 +10,22 @@ modules/packages/ifco/
 ├── package.json          # 包定义（workspace 成员，pnpm-workspace.yaml 已含 modules/**）
 ├── tsconfig.json         # extends 根 tsconfig，paths: @jeesite/ifco/* → ./*
 ├── api/ifco/             # 数据/接口层
-│   └── progress-fill/    # 项目进展填报/统计共用：指标清单、类目、共享假数据仓库与汇总计算
+│   ├── common.ts         # 进展/成效两域共用：类目、报送单位、周期、通用类型与哈希
+│   ├── progress-fill/    # 项目进展填报/统计：指标清单、假数据仓库与汇总计算
+│   └── effect-fill/      # 项目实施成效填报：指标清单（无类目维度）、独立假数据仓库
 └── views/ifco/
     ├── overview/         # 大屏展示页（display 应用，TSX）
     ├── progress-fill/    # 项目进展填报页（菜单组件位置 /ifco/progress-fill/list）
     │   ├── list.vue      # 页面主体（工具栏 + 类目 RadioGroup + 转置可编辑表格）
     │   └── export-excel.ts  # Excel 导出（xlsx 多级合并表头 + file-saver 下载）
-    └── progress-statistics/ # 项目进展统计页（菜单组件位置 /ifco/progress-statistics/list）
-        └── list.vue      # 只读查询：总览(全市) + 各报送单位 RadioGroup + 类目汇总表
+    ├── progress-statistics/ # 项目进展统计页（菜单组件位置 /ifco/progress-statistics/list）
+    │   └── list.vue      # 只读查询：全武汉市 + 各报送单位 RadioGroup + 类目汇总表
+    ├── effect-fill/      # 项目实施成效填报页（菜单组件位置 /ifco/effect-fill/list）
+        ├── list.vue      # 同进展填报交互；无类目 tab/总览，单表全指标（含节标题行）
+        ├── export-excel.ts  # Excel 导出（单行表头平铺表）
+        └── 项目实施成效情况.csv  # 指标源材料
+    └── effect-statistics/ # 项目成效统计页（菜单组件位置 /ifco/effect-statistics/list）
+        └── list.vue      # 只读汇总：全武汉市 + 13 区总计矩阵（行 = 全部成效指标）
 ```
 
 ## 页面要点（项目进展填报 /ifco/progress-fill/list）
@@ -53,6 +61,28 @@ modules/packages/ifco/
   total 行（新增就业岗位）= 各单位录入值之和；空值置空。
 - **数据共享**：与填报页共享 `progressFillStore`（模块级内存假数据仓库，api 层导出），
   填报页的改动在本页即时可见；后端接入后两页统一替换为接口读写。
+
+## 页面要点（项目实施成效填报 /ifco/effect-fill/list）
+
+- **与进展填报的结构差异（用户定案）：无类目维度**——不分一级/二级类目 tab、没有总览 tab，
+  一张转置表直接填写各项目的全部成效指标（行 = 全部指标，列 = 项目）；
+  「一、～八、」八个节标题行仅作长表分组展示（加粗、不填写）。
+- **复用进展填报其余交互**（列级编辑、新增项目 Modal+自动滚右、带入锁删、
+  报送单位默认江岸区、空值置空、奇偶淡青列、仅固定指标名称列+表头 sticky），详见上文进展填报要点。
+- 指标源自 `views/ifco/effect-fill/项目实施成效情况.csv`（代码 201~247）；
+  「数|面积」双值行（226/227/245/246）拆为「…数」「…面积」两行，共用同一代码；
+  全部数据行均为直接填报（InputNumber），「其中：/合计中：」仅为名称前缀与视觉层级
+  （缩进 = 全角空格数直传，CSV 半角 5/20/40 → 4/8/12），不参与自动求和。
+- **Excel 导出**为单行表头平铺表（指标名称/计量单位/代码/合计/各项目列），无类目分组。
+- **数据独立**：成效域 `effectFillStore`（周期 → 报送单位 → 单份项目列表，无叶子类目层）
+  与进展域 `progressFillStore` 相互独立；共用定义在 `api/ifco/common.ts`。
+
+## 页面要点（项目成效统计 /ifco/effect-statistics/list）
+
+- **只读汇总矩阵**：行 = 全部成效指标（含「一、～八、」节标题行，加粗不落数值）；
+  列 = 指标名称（固定）+ 计量单位 + 代码 + **全武汉市**（全部单位合计，数值加粗）+ 13 个区。
+- 筛选条件 = 填报年份 + 填报季度（切换即时生效）；导出按钮保留、功能待做。
+- 与成效填报共享 `effectFillStore`，填报页改动即时可见；空值与 0 置空、数值千分位。
 
 ## 使用方式
 

@@ -37,38 +37,27 @@ export type IndicatorDef = {
   parts?: string[];
 };
 
-/** 填报类目：一级类目，嵌套类目（老旧街区、老旧厂区、城中村等更新改造）含二级 */
-export type CategoryDef = {
-  key: string;
-  label: string;
-  children?: CategoryDef[];
-};
-
-/** 项目列（表格列） */
-export type ProjectColumn = {
-  key: string;
-  name: string;
-  /** 是否为「带入上一季度」生成的列（二三四季度不可删除，一季度带入的可删除） */
-  imported: boolean;
-  /** 单元格值：指标 key → 数值（text 行为字符串；无值 = 未填） */
-  values: Record<string, number | string>;
-};
-
-/** 单个叶子类目的填报数据 */
-export type TabFillData = {
-  projects: ProjectColumn[];
-  /** 合计级录入行（total，如新增就业岗位）：指标 key → 直接录入的合计值 */
-  totals: Record<string, number>;
-};
-
-/** 单个报送单位在一个周期内全部叶子类目的数据 */
-export type PeriodFillData = Record<string, TabFillData>;
-
-/**
- * 全部数据：周期 key（`${year}-Q${quarter}`）→ 报送单位 → 周期数据。
- * 填报页只操作当前选中单位的数据；统计页按单位聚合。
- */
-export type ProgressFillStore = Record<string, Record<string, PeriodFillData>>;
+// ── 类目/单位/周期与通用数据类型：与成效填报共用，定义见 ../common ──
+export type { CategoryDef, ProjectColumn, TabFillData, PeriodFillData } from '../common';
+export type { FillStore as ProgressFillStore } from '../common';
+export {
+  CATEGORIES,
+  CATEGORY_MAP,
+  DATA_CATEGORIES,
+  LEAF_CATEGORIES,
+  QUARTER_OPTIONS,
+  REPORT_UNITS,
+  SAMPLE_PROJECT_NAMES,
+  quarterLabel,
+  toPeriodKey,
+  prevPeriod,
+} from '../common';
+import {
+  LEAF_CATEGORIES as LEAF,
+  SAMPLE_PROJECT_NAMES as SAMPLE_NAMES,
+  hashSeed,
+} from '../common';
+import type { CategoryDef, FillStore, ProjectColumn, PeriodFillData, TabFillData } from '../common';
 
 /** 层级缩进：空格数 */
 const INDENT = (level: number) => '\u3000'.repeat(level);
@@ -125,107 +114,6 @@ export const INDICATOR_MAP: Record<string, IndicatorDef> = Object.fromEntries(
   INDICATORS.map((item) => [item.key, item]),
 );
 
-/** 一级类目（第一项为只读的总览） */
-export const CATEGORIES: CategoryDef[] = [
-  { key: 'overview', label: '总览' },
-  { key: 'existing-building', label: '既有建筑改造利用' },
-  { key: 'old-community', label: '城镇老旧小区整治改造' },
-  { key: 'complete-community', label: '完整社区建设' },
-  {
-    key: 'renewal-complex',
-    label: '老旧街区、老旧厂区、城中村等更新改造',
-    children: [
-      { key: 'old-street', label: '老旧街区更新改造' },
-      { key: 'old-factory', label: '老旧厂区更新改造' },
-      { key: 'urban-village', label: '城中村改造' },
-    ],
-  },
-  { key: 'city-function', label: '城市功能完善' },
-  { key: 'city-infrastructure', label: '城市基础设施建设改造' },
-  { key: 'ecological-restoration', label: '城市生态修复' },
-  { key: 'historical-culture', label: '城市历史文化保护传承' },
-];
-
-export const CATEGORY_MAP: Record<string, CategoryDef> = Object.fromEntries(
-  CATEGORIES.flatMap((cat) => [cat, ...(cat.children ?? [])].map((item) => [item.key, item])),
-);
-
-/** 除总览外的全部一级类目（总览聚合、导出分组用） */
-export const DATA_CATEGORIES = CATEGORIES.filter((cat) => cat.key !== 'overview');
-
-/** 叶子类目（实际持有项目列的 tab）：简单类目自身，嵌套类目的二级 */
-export const LEAF_CATEGORIES: CategoryDef[] = DATA_CATEGORIES.flatMap((cat) => cat.children ?? [cat]);
-
-/** 季度选项 */
-export const QUARTER_OPTIONS = [
-  { label: '一季度', value: '1' },
-  { label: '二季度', value: '2' },
-  { label: '三季度', value: '3' },
-  { label: '四季度', value: '4' },
-];
-
-/** 项目报送单位：武汉市各行政区（与体检模块 ADMIN_DIVISIONS 同口径，假数据阶段仅作筛选条件） */
-export const REPORT_UNITS = [
-  '江岸区',
-  '江汉区',
-  '硚口区',
-  '汉阳区',
-  '武昌区',
-  '青山区',
-  '洪山区',
-  '东西湖区',
-  '蔡甸区',
-  '江夏区',
-  '黄陂区',
-  '新洲区',
-  '汉南区',
-] as const;
-
-const QUARTER_LABELS: Record<string, string> = {
-  '1': '一季度',
-  '2': '二季度',
-  '3': '三季度',
-  '4': '四季度',
-};
-
-export function quarterLabel(quarter: string): string {
-  return QUARTER_LABELS[quarter] ?? quarter;
-}
-
-/** 周期 key：`${year}-Q${quarter}` */
-export function toPeriodKey(year: number | string, quarter: string): string {
-  return `${year}-Q${quarter}`;
-}
-
-/** 上一周期：一季度回到上一年四季度 */
-export function prevPeriod(year: number, quarter: string): { year: number; quarter: string } {
-  return quarter === '1' ? { year: year - 1, quarter: '4' } : { year, quarter: String(Number(quarter) - 1) };
-}
-
-/** 示例项目列名（每个叶子类目预置 20 列） */
-export const SAMPLE_PROJECT_NAMES = [
-  'A1',
-  'A2',
-  'A3',
-  'B1',
-  'B2',
-  'B3',
-  'C1',
-  'C2',
-  'C3',
-  'D1',
-  'D2',
-  'D3',
-  'E1',
-  'E2',
-  'E3',
-  'F1',
-  'F2',
-  'F3',
-  'G1',
-  'G2',
-];
-
 /** 文字行（其他本年实际到位资金的来源）的示例取值 */
 const SAMPLE_SOURCES = ['企业自筹为主', '银行贷款为主', '市区两级财政配套', '专项债券为主', '社会资本投入为主'];
 
@@ -250,16 +138,6 @@ const SAMPLE_RANGES: Record<string, [number, number]> = {
   r23: [5, 300],
 };
 
-/** FNV-1a 字符串哈希：让示例值随（类目,项目,指标）确定生成、每次渲染不变 */
-function hashSeed(seed: string): number {
-  let hash = 2166136261;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash ^= seed.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
-
 function sampleCellValue(tabKey: string, columnKey: string, item: IndicatorDef): number | string {
   const seed = hashSeed(`${tabKey}|${columnKey}|${item.key}`);
   if (item.kind === 'text') {
@@ -273,7 +151,7 @@ function sampleCellValue(tabKey: string, columnKey: string, item: IndicatorDef):
 }
 
 export function createSampleProjects(tabKey: string): ProjectColumn[] {
-  return SAMPLE_PROJECT_NAMES.map((name) => {
+  return SAMPLE_NAMES.map((name) => {
     const key = `${tabKey}-${name}`;
     const values: Record<string, number | string> = {};
     for (const item of INDICATORS) {
@@ -288,7 +166,7 @@ export function createSampleProjects(tabKey: string): ProjectColumn[] {
 /** 新周期的初始数据：每个叶子类目 20 列示例项目 + 合计级录入行示例值 */
 export function createPeriodData(): PeriodFillData {
   const data: PeriodFillData = {};
-  for (const leaf of LEAF_CATEGORIES) {
+  for (const leaf of LEAF) {
     data[leaf.key] = {
       projects: createSampleProjects(leaf.key),
       totals: createSampleTotals(leaf.key),
@@ -308,7 +186,7 @@ function createSampleTotals(tabKey: string): Record<string, number> {
 }
 
 // ── 内存假数据仓库（模块级单例，填报页与统计页共享；后端接入后整体替换） ──
-export const progressFillStore: ProgressFillStore = reactive({});
+export const progressFillStore: FillStore = reactive({});
 
 /** 取某周期某报送单位的数据（懒初始化：首次访问生成 20 列示例数据） */
 export function ensureUnitPeriodData(periodKey: string, unit: string): PeriodFillData {
@@ -351,7 +229,7 @@ export function cellValue(item: IndicatorDef, column: ProjectColumn): number | s
  * count 行 = 项目列数；text 行无合计（undefined）；其余 = 各列数值之和。
  */
 export function tabTotal(item: IndicatorDef, tab: TabFillData | undefined): number | undefined {
-  if (item.kind === 'total') return tab?.totals[item.key];
+  if (item.kind === 'total') return tab?.totals?.[item.key];
   if (item.kind === 'count') return tab?.projects.length ?? 0;
   if (item.kind === 'text') return undefined;
   let sum = 0;
@@ -366,7 +244,7 @@ export function tabTotal(item: IndicatorDef, tab: TabFillData | undefined): numb
 export function grandTotal(item: IndicatorDef, periodData: PeriodFillData | undefined): number | undefined {
   if (item.kind === 'text') return undefined;
   let sum = 0;
-  for (const leaf of LEAF_CATEGORIES) {
+  for (const leaf of LEAF) {
     const value = tabTotal(item, periodData?.[leaf.key]);
     if (typeof value === 'number') sum += value;
   }

@@ -1,0 +1,196 @@
+<!--
+  ifco —— 项目实施成效统计（/ifco/effect-statistics/list）
+
+  页面结构:Card 工具栏(填报年份/填报季度 | 导出[按钮保留,功能待做])
+  → 只读汇总表格:行 = 全部成效指标(含「一、～八、」节标题行,加粗不落数值),
+    列 = 指标名称(固定) | 计量单位 | 代码 | 全武汉市 | 13 个行政区报送单位。
+
+  口径:
+  - 只展示汇总,整页只读(无编辑/新增/带入/保存);
+  - 全武汉市列 = 全部报送单位合计;各区列 = 该区填报数据的行合计;
+  - 与成效填报页共享内存假数据仓库 effectFillStore
+    (@jeesite/ifco/api/ifco/effect-fill,填报页改动在本页即时可见;后端接入后整体替换);
+  - 空值与 0 置空(不补斜杠、不补 0),数值千分位。
+
+  菜单注册(菜单名称「项目成效统计」):
+   - 链接地址:/ifco/effect-statistics/list
+   - 组件位置:/ifco/effect-statistics/list(与链接地址一致)
+-->
+<template>
+  <PageWrapper>
+    <Card class="mb-3">
+      <div class="flex flex-wrap items-center justify-between gap-y-2">
+        <div class="flex items-center">
+          <span class="text-gray-500">填报年份</span>
+          <Select v-model:value="year" :options="yearOptions" class="ml-2 w-28" />
+          <span class="ml-6 text-gray-500">填报季度</span>
+          <Select v-model:value="quarter" :options="QUARTER_OPTIONS" class="ml-2 w-28" />
+        </div>
+        <a-button @click="handleExport"> 导出 </a-button>
+      </div>
+    </Card>
+
+    <Card :title="tableCardTitle">
+      <Table
+        :columns="tableColumns"
+        :data-source="STAT_ROWS"
+        :scroll="{ x: scrollX }"
+        :pagination="false"
+        sticky
+        bordered
+        size="small"
+        row-key="key"
+      />
+    </Card>
+  </PageWrapper>
+</template>
+<script lang="ts" setup name="ViewsIfcoEffectStatisticsList">
+  import { computed, ref } from 'vue';
+  import { Card, Select, Table } from 'antdv-next';
+  import type { TableColumnsType } from 'antdv-next';
+  import { useMessage } from '@jeesite/core/hooks/web/useMessage';
+  import { PageWrapper } from '@jeesite/core/components/Page';
+  import { dateUtil } from '@jeesite/core/utils/dateUtil';
+  import { buildYearItems } from '@jeesite/core/libs/year';
+  import type { EffectIndicatorDef, EffectUnitData } from '@jeesite/ifco/api/ifco/effect-fill';
+  import {
+    EFFECT_INDICATORS,
+    EFFECT_INDICATOR_MAP,
+    ensureEffectUnitData,
+    rowTotal,
+  } from '@jeesite/ifco/api/ifco/effect-fill';
+  import { QUARTER_OPTIONS, REPORT_UNITS, quarterLabel, toPeriodKey } from '@jeesite/ifco/api/ifco/common';
+
+  /** 表格行(指标) */
+  type StatRow = {
+    key: string;
+    kind: EffectIndicatorDef['kind'];
+    name: string;
+    unit: string;
+    code: string;
+  };
+
+  const { showMessage } = useMessage();
+
+  // ── 筛选条件:年份 + 季度(切换即时生效) ──────────────────────────────
+  const yearOptions = (buildYearItems(3) as { key: string; label: string }[]).map((item) => ({
+    label: item.label,
+    value: Number(item.key),
+  }));
+  const year = ref(dateUtil().year());
+  // dayjs 的 quarter() 需 quarterOfYear 插件，这里用 month() 推导当前季度
+  const quarter = ref(String(Math.floor(dateUtil().month() / 3) + 1));
+
+  /** 各报送单位的数据集(懒初始化;全武汉市列 = 全部单位合计) */
+  const unitDatas = computed<EffectUnitData[]>(() => {
+    const key = toPeriodKey(year.value, quarter.value);
+    return REPORT_UNITS.map((unit) => ensureEffectUnitData(key, unit));
+  });
+
+  const tableCardTitle = computed(() => `${year.value}年 ${quarterLabel(quarter.value)} 项目实施成效统计`);
+
+  // ── 表格行(全部指标,含节标题行) ─────────────────────────────────────
+  const STAT_ROWS: StatRow[] = EFFECT_INDICATORS.map((item) => ({
+    key: item.key,
+    kind: item.kind,
+    name: item.name,
+    unit: item.unit,
+    code: item.code,
+  }));
+
+  /** 节标题行加粗;全武汉市列数值加粗(全市口径) */
+  const rowOnCell = (record: StatRow, columnKey?: string) => ({
+    className:
+      [
+        record.kind === 'section' ? 'effect-stat-row-section' : undefined,
+        columnKey === 'city' && record.kind !== 'section' ? 'effect-stat-col-city' : undefined,
+      ]
+        .filter(Boolean)
+        .join(' ') || undefined,
+  });
+
+  /** 未填内容与 0 一律置空(不补斜杠、不补 0) */
+  function renderDisplay(value: number | string | undefined) {
+    if (value === undefined || value === '' || value === 0) return '';
+    return typeof value === 'number' ? value.toLocaleString('zh-CN') : value;
+  }
+
+  const tableColumns = computed<TableColumnsType<StatRow>>(() => {
+    /** 全武汉市列:全部单位行合计之和 */
+    const cityColumn: TableColumnsType<StatRow>[number] = {
+      key: 'city',
+      title: '全武汉市',
+      width: 130,
+      align: 'right',
+      onCell: (record: StatRow) => rowOnCell(record, 'city'),
+      render: (_value: unknown, record: StatRow) => {
+        const item = EFFECT_INDICATOR_MAP[record.key]!;
+        let sum = 0;
+        for (const data of unitDatas.value) {
+          const value = rowTotal(item, data);
+          if (typeof value === 'number') sum += value;
+        }
+        return renderDisplay(item.kind === 'section' ? undefined : sum);
+      },
+    };
+    /** 各区列:该区填报数据的行合计 */
+    const unitColumns: TableColumnsType<StatRow> = REPORT_UNITS.map((unit, index) => ({
+      key: unit,
+      title: unit,
+      width: 120,
+      align: 'right',
+      onCell: (record: StatRow) => rowOnCell(record),
+      render: (_value: unknown, record: StatRow) =>
+        renderDisplay(rowTotal(EFFECT_INDICATOR_MAP[record.key]!, unitDatas.value[index])),
+    }));
+    return [
+      {
+        key: 'name',
+        title: '指标名称',
+        dataIndex: 'name',
+        width: 440,
+        fixed: 'left',
+        className: 'effect-stat-col-name',
+      },
+      {
+        key: 'unit',
+        title: '计量单位',
+        dataIndex: 'unit',
+        width: 90,
+        align: 'center',
+      },
+      {
+        key: 'code',
+        title: '代码',
+        dataIndex: 'code',
+        width: 80,
+        align: 'center',
+      },
+      cityColumn,
+      ...unitColumns,
+    ];
+  });
+
+  const scrollX = computed(() => 400 + 90 + 80 + 130 + 120 * REPORT_UNITS.length);
+
+  // ── 导出(按钮保留,功能待做) ─────────────────────────────────────────
+  function handleExport() {
+    showMessage('导出功能建设中');
+  }
+</script>
+
+<style>
+  /* 节标题行(一、～八、)加粗 */
+  .effect-stat-row-section {
+    font-weight: 600;
+  }
+
+  /* 全武汉市列数值加粗(全市口径) */
+  .effect-stat-col-city {
+    font-weight: 600;
+  }
+
+  .effect-stat-col-name {
+    white-space: nowrap;
+  }
+</style>
