@@ -304,7 +304,7 @@
   /** 未填内容与 0 一律置空(不补斜杠、不补 0) */
   function renderDisplay(value: number | string | undefined) {
     if (value === undefined || value === '' || value === 0) return '';
-    return typeof value === 'number' ? value.toLocaleString('zh-CN') : value;
+    return typeof value === 'number' ? String(value) : value;
   }
 
   function setCellValue(col: ProjectColumn, indicatorKey: string, value: number | string | undefined) {

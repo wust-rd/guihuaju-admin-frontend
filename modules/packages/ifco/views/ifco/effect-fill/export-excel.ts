@@ -4,6 +4,7 @@
  * 成效填报无类目维度（用户定案），导出为单行表头的平铺表：
  *   指标名称 | 计量单位 | 代码 | 合计 | 各项目列…；
  * 表体为成效指标全集（含「一、～八、」节标题行，仅名称列有值，其余空白）。
+ * 双值行（数|面积）导出为一个文本单元格：纯数字以竖线拼接（无千分位），空侧留空。
  * 复用项目既有 xlsx 方案（同 progress-fill/export-excel.ts，见 AGENTS 文件下载约定）。
  */
 import { utils, write } from 'xlsx';
@@ -13,6 +14,16 @@ import type { ProjectColumn } from '@jeesite/ifco/api/ifco/common';
 import { quarterLabel } from '@jeesite/ifco/api/ifco/common';
 import type { EffectUnitData } from '@jeesite/ifco/api/ifco/effect-fill';
 import { EFFECT_INDICATORS, cellValue, rowTotal } from '@jeesite/ifco/api/ifco/effect-fill';
+
+/** 导出值：双值行纯数字竖线拼接（无千分位）；普通行未填与 0 置空 */
+function exportValue(value: number | string | [number, number] | undefined): string | number | undefined {
+  if (Array.isArray(value)) {
+    const slot = (v: number) => (v === 0 ? '' : String(v));
+    const text = `${slot(value[0])}|${slot(value[1])}`;
+    return text === '|' ? undefined : text;
+  }
+  return value === 0 ? undefined : value;
+}
 
 type ExportParams = {
   year: number;
@@ -27,25 +38,23 @@ export async function exportEffectExcel({ year, quarter, unitData }: ExportParam
   const rows: (string | number | undefined)[][] = [
     ['指标名称', '计量单位', '代码', '合计', ...projects.map((project) => project.name)],
   ];
-  /** 未填与 0 置空(与页面展示一致:不补斜杠、不补 0) */
-  const blankZero = (value: number | string | undefined) => (value === 0 ? undefined : value);
   for (const item of EFFECT_INDICATORS) {
     const isSection = item.kind === 'section';
     const row: (string | number | undefined)[] = [
       item.name,
       isSection ? undefined : item.unit || undefined,
       item.code || undefined,
-      isSection ? undefined : blankZero(rowTotal(item, unitData)),
+      isSection ? undefined : exportValue(rowTotal(item, unitData)),
     ];
     for (const project of projects) {
-      row.push(isSection ? undefined : blankZero(cellValue(item, project)));
+      row.push(isSection ? undefined : exportValue(cellValue(item, project)));
     }
     rows.push(row);
   }
 
   const worksheet: WorkSheet = utils.aoa_to_sheet(rows);
 
-  // ── 列宽与数值千分位 ────────────────────────────────────────────────
+  // ── 列宽 ────────────────────────────────────────────────────────────
   worksheet['!cols'] = [
     { wch: 42 },
     { wch: 10 },
@@ -53,15 +62,6 @@ export async function exportEffectExcel({ year, quarter, unitData }: ExportParam
     { wch: 14 },
     ...projects.map(() => ({ wch: 12 })),
   ];
-  const range = utils.decode_range(worksheet['!ref'] ?? 'A1');
-  for (let r = 1; r <= range.e.r; r += 1) {
-    for (let c = 3; c <= range.e.c; c += 1) {
-      const cell = worksheet[utils.encode_cell({ r, c })];
-      if (cell && cell.t === 'n') {
-        cell.z = '#,##0';
-      }
-    }
-  }
 
   const workbook: WorkBook = {
     SheetNames: ['项目实施成效填报'],

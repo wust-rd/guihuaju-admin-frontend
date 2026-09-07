@@ -220,6 +220,8 @@ export function cellValue(item: IndicatorDef, column: ProjectColumn): number | s
   }
   if (item.kind === 'count' || item.kind === 'total') return undefined;
   const value = column.values[item.key];
+  // 进展域无双值行；数组值（成效域二元组）不会出现，守卫仅为类型收敛
+  if (Array.isArray(value)) return undefined;
   return value === undefined || value === '' ? undefined : value;
 }
 

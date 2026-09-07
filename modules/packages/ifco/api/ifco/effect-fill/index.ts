@@ -10,7 +10,8 @@
  *
  * 指标清单源自《项目实施成效情况.csv》：
  * - 「一、～八、」8 个节标题行仅作长表分组展示（加粗、不填写），不是类目表头；
- * - 「数|面积」双值行（226/227/245/246）拆为「…数」「…面积」两行，共用同一指标代码；
+ * - 「数|面积」双值行（226/227/245/246）为单行 dual：每格存二元组 [数, 面积]，
+ *   编辑时两个输入框，显示/导出用竖线拼接（导出纯数字不带千分位）；
  * - 缩进 = 全角空格数直传（照 CSV 半角空格换算：5→4、20→8、40→12）；
  * - 无汇总行/count 行/合计级录入行：全部数据行均为直接填报，「其中：/合计中：」
  *   仅是名称前缀与视觉层级，不参与任何自动求和。
@@ -35,6 +36,8 @@ export type EffectIndicatorDef = {
   code: string;
   /** 行类型 */
   kind: EffectIndicatorKind;
+  /** 双值行（数|面积）：一格存二元组 [数, 面积]，编辑时两个输入框，显示/导出用竖线拼接 */
+  dual?: boolean;
 };
 
 /** 单个报送单位在一个周期的成效数据：只有一份项目列表（无类目维度） */
@@ -55,8 +58,9 @@ function row(
   unit: string,
   code = '',
   kind: EffectIndicatorKind = 'fill',
+  dual = false,
 ): EffectIndicatorDef {
-  return { key, name: `${INDENT(indent)}${name}`, unit, code, kind };
+  return { key, name: `${INDENT(indent)}${name}`, unit, code, kind, dual };
 }
 
 function section(key: string, name: string): EffectIndicatorDef {
@@ -98,10 +102,8 @@ export const EFFECT_INDICATORS: EffectIndicatorDef[] = [
   row('r224', 4, '其中：商业服务设施面积', '平方米', '224'),
   row('r225', 0, '启动改造城中村村（居）民户数', '户', '225'),
   section('s5', '五、城市功能完善'),
-  row('r226a', 0, '新增城市公共服务设施数', '个', '226'),
-  row('r226b', 0, '新增城市公共服务设施面积', '平方米', '226'),
-  row('r227a', 4, '其中：全民健身场地设施建设改造数', '个', '227'),
-  row('r227b', 4, '其中：全民健身场地设施建设改造面积', '平方米', '227'),
+  row('r226', 0, '新增城市公共服务设施数|面积', '个|平方米', '226', 'fill', true),
+  row('r227', 4, '其中：全民健身场地设施建设改造数|面积', '个|平方米', '227', 'fill', true),
   row('r228', 0, '城市公共空间建设面积', '平方米', '228'),
   section('s6', '六、城市基础设施建设改造'),
   row('r229', 0, '城市地下管线管网改造和新增长度', '公里', '229'),
@@ -122,10 +124,8 @@ export const EFFECT_INDICATORS: EffectIndicatorDef[] = [
   row('r243', 0, '改造和新增口袋公园数', '个', '243'),
   section('s8', '八、城市历史文化保护传承'),
   row('r244', 0, '历史文化街区保护提升（修复）数', '片', '244'),
-  row('r245a', 0, '历史建筑修缮数', '处', '245'),
-  row('r245b', 0, '历史建筑修缮面积', '平方米', '245'),
-  row('r246a', 0, '历史建筑活化利用数', '处', '246'),
-  row('r246b', 0, '历史建筑活化利用面积', '平方米', '246'),
+  row('r245', 0, '历史建筑修缮数|面积', '处|平方米', '245', 'fill', true),
+  row('r246', 0, '历史建筑活化利用数|面积', '处|平方米', '246', 'fill', true),
   row('r247', 0, '城市历史文化保护传承涉及居民户数', '户', '247'),
 ];
 
@@ -147,17 +147,26 @@ const UNIT_SAMPLE_RANGES: Record<string, [number, number]> = {
   '吨/日': [10, 600],
 };
 
-function sampleCellValue(tabKey: string, columnKey: string, item: EffectIndicatorDef): number {
-  const seed = hashSeed(`${tabKey}|${columnKey}|${item.key}`);
-  const [min, max] = UNIT_SAMPLE_RANGES[item.unit] ?? [1, 100];
+function sampleSingleValue(unit: string, seed: number): number {
+  const [min, max] = UNIT_SAMPLE_RANGES[unit] ?? [1, 100];
   return min + (seed % (max - min + 1));
+}
+
+function sampleCellValue(tabKey: string, columnKey: string, item: EffectIndicatorDef): number | [number, number] {
+  const base = `${tabKey}|${columnKey}|${item.key}`;
+  if (item.dual) {
+    // 双值行按位取值：单位串「个|平方米」拆成两槽各自的量级
+    const [unitA = '个', unitB = '平方米'] = item.unit.split('|');
+    return [sampleSingleValue(unitA, hashSeed(`${base}#0`)), sampleSingleValue(unitB, hashSeed(`${base}#1`))];
+  }
+  return sampleSingleValue(item.unit, hashSeed(base));
 }
 
 /** 示例项目列（20 列，A1…G2），为全部填报行生成示例值 */
 export function createEffectSampleProjects(unit: string): ProjectColumn[] {
   return SAMPLE_PROJECT_NAMES.map((name) => {
     const key = `${unit}-${name}`;
-    const values: Record<string, number | string> = {};
+    const values: Record<string, number | string | [number, number]> = {};
     for (const item of EFFECT_INDICATORS) {
       if (item.kind === 'section') continue;
       values[item.key] = sampleCellValue(unit, key, item);
@@ -187,22 +196,66 @@ export function getEffectUnitData(periodKey: string, unit: string): EffectUnitDa
 
 // ── 取值与汇总（全部数据行为直接填报，节标题行恒为空） ─────────────────
 
-/** 单元格取值：填报行 = 已填值；节标题行不落单元格 */
+/** 单元格取值：双值行返回二元组；填报行 = 已填值；节标题行不落单元格 */
 export function cellValue(
   item: EffectIndicatorDef,
   column: ProjectColumn,
-): number | string | undefined {
+): number | string | [number, number] | undefined {
   if (item.kind === 'section') return undefined;
   const value = column.values[item.key];
-  return value === undefined || value === '' ? undefined : value;
+  if (item.dual) {
+    return Array.isArray(value) ? value : undefined;
+  }
+  return value === undefined || value === '' || Array.isArray(value) ? undefined : value;
 }
 
-/** 一行指标的「合计」：全部项目列数值之和（节标题行无合计） */
-export function rowTotal(item: EffectIndicatorDef, data: EffectUnitData | undefined): number | undefined {
+/** 一行指标的「合计」：双值行按位求和返回二元组；普通行 = 数值之和；节标题行无合计 */
+export function rowTotal(
+  item: EffectIndicatorDef,
+  data: EffectUnitData | undefined,
+): number | [number, number] | undefined {
   if (item.kind === 'section') return undefined;
+  if (item.dual) {
+    let sumA = 0;
+    let sumB = 0;
+    for (const column of data?.projects ?? []) {
+      const value = cellValue(item, column);
+      if (Array.isArray(value)) {
+        sumA += value[0];
+        sumB += value[1];
+      }
+    }
+    return [sumA, sumB];
+  }
   let sum = 0;
   for (const column of data?.projects ?? []) {
     const value = cellValue(item, column);
+    if (typeof value === 'number') sum += value;
+  }
+  return sum;
+}
+
+/** 统计口径：一批单位聚合后的行合计（双值行按位求和返回二元组；节标题行无合计） */
+export function rowTotalOfUnits(
+  item: EffectIndicatorDef,
+  units: EffectUnitData[],
+): number | [number, number] | undefined {
+  if (item.kind === 'section') return undefined;
+  if (item.dual) {
+    let sumA = 0;
+    let sumB = 0;
+    for (const data of units) {
+      const value = rowTotal(item, data);
+      if (Array.isArray(value)) {
+        sumA += value[0];
+        sumB += value[1];
+      }
+    }
+    return [sumA, sumB];
+  }
+  let sum = 0;
+  for (const data of units) {
+    const value = rowTotal(item, data);
     if (typeof value === 'number') sum += value;
   }
   return sum;

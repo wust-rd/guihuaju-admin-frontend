@@ -214,7 +214,10 @@
         key: `${item.key}-imp${importSeq}`,
         name: item.name,
         imported: true,
-        values: { ...item.values },
+        // 双值行的二元组需逐格深拷贝,避免两周期共用同一数组引用
+        values: Object.fromEntries(
+          Object.entries(item.values).map(([k, v]) => [k, Array.isArray(v) ? ([...v] as [number, number]) : v]),
+        ),
       })),
     );
     broughtMap[broughtKey.value] = true;
@@ -265,10 +268,16 @@
     className: record.kind === 'section' ? 'effect-fill-row-section' : undefined,
   });
 
-  /** 未填内容与 0 一律置空(不补斜杠、不补 0) */
-  function renderDisplay(value: number | string | undefined) {
+  /** 未填内容与 0 一律置空(不补斜杠、不补 0);双值行「数 | 面积」竖线留空隙 */
+  function renderDisplay(value: number | string | [number, number] | undefined) {
+    if (Array.isArray(value)) {
+      const format = (v: number) => (v === 0 ? '' : String(v));
+      // 竖线前后各留 4 个空格;用不间断空格(U+00A0)防止 HTML 空白折叠
+      const gap = '\u00A0\u00A0';
+      return `${format(value[0])}${gap}|${gap}${format(value[1])}`;
+    }
     if (value === undefined || value === '' || value === 0) return '';
-    return typeof value === 'number' ? value.toLocaleString('zh-CN') : value;
+    return typeof value === 'number' ? String(value) : value;
   }
 
   function setCellValue(col: ProjectColumn, indicatorKey: string, value: number | string | undefined) {
@@ -279,10 +288,37 @@
     }
   }
 
-  /** 单元格:编辑列内的填报行渲染 InputNumber,其余为只读文本 */
+  /** 双值格写入:按位落到二元组 */
+  function setDualCellValue(col: ProjectColumn, indicatorKey: string, slot: 0 | 1, value: number | undefined) {
+    const current = col.values[indicatorKey];
+    const tuple: [number, number] = Array.isArray(current) ? [...current] : [0, 0];
+    tuple[slot] = value ?? 0;
+    col.values[indicatorKey] = tuple;
+  }
+
+  /** 单元格:编辑列内的填报行渲染输入控件(双值行两个框中间固定竖线),其余为只读文本 */
   function renderFillCell(item: EffectIndicatorDef, col: ProjectColumn) {
     if (editingColKey.value === col.key && item.kind === 'fill') {
       const value = col.values[item.key];
+      if (item.dual) {
+        const tuple: [number, number] = Array.isArray(value) ? value : [0, 0];
+        const dualInput = (slot: 0 | 1, placeholder: string) =>
+          h(InputNumber, {
+            size: 'small',
+            class: 'w-0 flex-1',
+            value: tuple[slot] || undefined,
+            min: 0,
+            controls: false,
+            placeholder,
+            'onUpdate:value': (value2: number | string | null) =>
+              setDualCellValue(col, item.key, slot, typeof value2 === 'number' ? value2 : undefined),
+          });
+        return h('div', { class: 'flex w-full items-center gap-1' }, [
+          dualInput(0, '数'),
+          h('span', { class: 'shrink-0 text-gray-400' }, '|'),
+          dualInput(1, '面积'),
+        ]);
+      }
       return h(InputNumber, {
         size: 'small',
         class: 'w-full',
@@ -370,7 +406,7 @@
       {
         key: 'total',
         title: '合计',
-        width: 120,
+        width: 140,
         align: 'right',
         onCell: sumRowOnCell,
         render: (_value: unknown, record: FillRow) =>
@@ -382,7 +418,7 @@
 
   const scrollX = computed(() => {
     const count = unitData.value?.projects.length ?? 0;
-    return 400 + 90 + 80 + 120 + 140 * count;
+    return 400 + 90 + 80 + 120 + 180 * count;
   });
 </script>
 

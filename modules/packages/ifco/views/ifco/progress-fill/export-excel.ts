@@ -10,7 +10,7 @@
  *   行 2  嵌套类目（老旧街区、老旧厂区、城中村等更新改造）的二级跨列；
  *   行 3  各项目名 + 每个叶子类目一列「小计」（= 填报页该类目合计列）；
  *   左侧固定 4 列（指标名称 / 计量单位 / 代码 / 总计）纵向合并三行，总计列在最左。
- * 数值单元格统一千分位格式（z='#,##0'）；xlsx 社区版不支持字体/填充样式，
+ * 数值单元格纯数字输出（不用千分位）；xlsx 社区版不支持字体/填充样式，
  * 汇总行不加粗、无冻结窗格（如需可后端模板导出替代）。
  */
 import { utils, write } from 'xlsx';
@@ -131,16 +131,6 @@ export async function exportProgressFillExcel({ year, quarter, periodData }: Exp
     return { wch: 12 };
   });
 
-  // ── 数值单元格千分位 ────────────────────────────────────────────────
-  const range = utils.decode_range(worksheet['!ref'] ?? 'A1');
-  for (let r = 3; r <= range.e.r; r += 1) {
-    for (let c = 0; c <= range.e.c; c += 1) {
-      const cell = worksheet[utils.encode_cell({ r, c })];
-      if (cell && cell.t === 'n') {
-        cell.z = '#,##0';
-      }
-    }
-  }
 
   const workbook: WorkBook = {
     SheetNames: ['项目进展填报'],

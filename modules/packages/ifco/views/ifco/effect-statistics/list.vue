@@ -58,6 +58,7 @@
     EFFECT_INDICATOR_MAP,
     ensureEffectUnitData,
     rowTotal,
+    rowTotalOfUnits,
   } from '@jeesite/ifco/api/ifco/effect-fill';
   import { QUARTER_OPTIONS, REPORT_UNITS, quarterLabel, toPeriodKey } from '@jeesite/ifco/api/ifco/common';
 
@@ -109,10 +110,16 @@
         .join(' ') || undefined,
   });
 
-  /** 未填内容与 0 一律置空(不补斜杠、不补 0) */
-  function renderDisplay(value: number | string | undefined) {
+  /** 未填内容与 0 一律置空(不补斜杠、不补 0);双值行「数 | 面积」竖线留空隙 */
+  function renderDisplay(value: number | string | [number, number] | undefined) {
+    if (Array.isArray(value)) {
+      const format = (v: number) => (v === 0 ? '' : String(v));
+      // 竖线前后各留 4 个空格;用不间断空格(U+00A0)防止 HTML 空白折叠
+      const gap = '\u00A0\u00A0';
+      return `${format(value[0])}${gap}|${gap}${format(value[1])}`;
+    }
     if (value === undefined || value === '' || value === 0) return '';
-    return typeof value === 'number' ? value.toLocaleString('zh-CN') : value;
+    return typeof value === 'number' ? String(value) : value;
   }
 
   const tableColumns = computed<TableColumnsType<StatRow>>(() => {
@@ -120,24 +127,17 @@
     const cityColumn: TableColumnsType<StatRow>[number] = {
       key: 'city',
       title: '全武汉市',
-      width: 130,
+      width: 200,
       align: 'right',
       onCell: (record: StatRow) => rowOnCell(record, 'city'),
-      render: (_value: unknown, record: StatRow) => {
-        const item = EFFECT_INDICATOR_MAP[record.key]!;
-        let sum = 0;
-        for (const data of unitDatas.value) {
-          const value = rowTotal(item, data);
-          if (typeof value === 'number') sum += value;
-        }
-        return renderDisplay(item.kind === 'section' ? undefined : sum);
-      },
+      render: (_value: unknown, record: StatRow) =>
+        renderDisplay(rowTotalOfUnits(EFFECT_INDICATOR_MAP[record.key]!, unitDatas.value)),
     };
     /** 各区列:该区填报数据的行合计 */
     const unitColumns: TableColumnsType<StatRow> = REPORT_UNITS.map((unit, index) => ({
       key: unit,
       title: unit,
-      width: 120,
+      width: 200,
       align: 'right',
       onCell: (record: StatRow) => rowOnCell(record),
       render: (_value: unknown, record: StatRow) =>

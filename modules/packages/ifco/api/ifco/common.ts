@@ -19,8 +19,8 @@ export type ProjectColumn = {
   name: string;
   /** 是否为「带入上一季度」生成的列（二三四季度不可删除，一季度带入的可删除） */
   imported: boolean;
-  /** 单元格值：指标 key → 数值（文字行为字符串；无值 = 未填） */
-  values: Record<string, number | string>;
+  /** 单元格值：指标 key → 数值（文字行为字符串；双值行存二元组 [数,面积]，成效域使用；无值 = 未填） */
+  values: Record<string, number | string | [number, number]>;
 };
 
 /** 单个叶子类目的填报数据（成效域无合计级录入行，totals 不使用） */
