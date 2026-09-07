@@ -30,7 +30,7 @@ export const LinkItem = defineComponent({
 
     const renderContent = (navigate?: () => void) => (
       <div
-        class="relative w-194px h-56px flex items-center"
+        class="relative w-194px h-56px flex items-center cursor-pointer"
         onClick={() => {
           if (!props.disabled && navigate) {
             navigate();
