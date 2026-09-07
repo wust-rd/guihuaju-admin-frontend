@@ -27,7 +27,7 @@ function watchWorkspaceDirs(): Plugin {
     name: 'watch-workspace-dirs',
     apply: 'serve',
     configureServer(server) {
-      server.watcher.add([path.resolve(__dirname, '../packages'), path.resolve(__dirname, '../modules')]);
+      server.watcher.add([path.resolve(import.meta.dirname, '../packages'), path.resolve(import.meta.dirname, '../modules')]);
     },
   };
 }
@@ -63,12 +63,12 @@ export default defineConfig(async ({ command, mode }: ConfigEnv) => {
         // CSS 已在 index.html 中全局加载，此空文件避免构建报错
         {
           find: 'maplibre-gl/dist/maplibre-gl.css',
-          replacement: path.resolve(__dirname, '../packages/vmap/src/maplibre-gl-empty.css'),
+          replacement: path.resolve(import.meta.dirname, '../packages/vmap/src/maplibre-gl-empty.css'),
         },
-        { find: 'maplibre-gl', replacement: path.resolve(__dirname, '../packages/vmap/src/maplibre-gl-shim.ts') },
-        { find: '@jeesite/web', replacement: path.resolve(__dirname, './') },
-        { find: '@jeesite/display', replacement: path.resolve(__dirname, '../packages/display') },
-        { find: '@jeesite/vmap', replacement: path.resolve(__dirname, '../packages/vmap') },
+        { find: 'maplibre-gl', replacement: path.resolve(import.meta.dirname, '../packages/vmap/src/maplibre-gl-shim.ts') },
+        { find: '@jeesite/web', replacement: path.resolve(import.meta.dirname, './') },
+        { find: '@jeesite/display', replacement: path.resolve(import.meta.dirname, '../packages/display') },
+        { find: '@jeesite/vmap', replacement: path.resolve(import.meta.dirname, '../packages/vmap') },
       ],
     },
   };
