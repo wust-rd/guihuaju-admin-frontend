@@ -22,7 +22,7 @@
   import { Icon } from '@jeesite/core/components/Icon';
   import { BasicForm, FormSchema, useForm } from '@jeesite/core/components/Form';
   import { BasicDrawer, useDrawerInner } from '@jeesite/core/components/Drawer';
-  import { EXPERT_FIELDS, EXPERT_ORG_TYPES, EXPERT_TITLES } from './expert-mock';
+  import { EXPERT_FIELDS, EXPERT_ORG_TYPES, EXPERT_TITLES } from '../expert-store';
 
   const emit = defineEmits(['success', 'register']);
 

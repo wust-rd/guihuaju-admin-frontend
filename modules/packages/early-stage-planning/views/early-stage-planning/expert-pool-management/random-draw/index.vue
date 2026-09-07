@@ -104,7 +104,9 @@
           >
             <!-- 头部：头像 + 姓名 + 职称徽标 -->
             <div class="flex items-start gap-12px">
-              <img :src="expert.avatar" alt="" class="size-48px shrink-0 rd-full object-cover" />
+              <div class="size-48px shrink-0 rd-full bg-cyan-100 text-cyan-700 flex items-center justify-center text-18px font-500">
+                {{ expert.name.slice(0, 1) }}
+              </div>
               <div class="min-w-0 flex-1">
                 <div class="flex items-center justify-between">
                   <span class="truncate text-16px font-500 text-gray-800">{{ expert.name }}</span>
@@ -122,7 +124,7 @@
 
             <!-- 履历摘要 -->
             <p class="mt-12px line-clamp-2 text-13px leading-22px text-gray-500">
-              {{ expert.resume }}
+              {{ expert.career }}
               <a class="whitespace-nowrap text-cyan-600">... 更多信息 ></a>
             </p>
 
@@ -162,6 +164,8 @@
   import { Checkbox, Select } from 'antdv-next';
   import { PageWrapper } from '@jeesite/core/components/Page';
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
+  import type { Expert } from '../expert-store';
+  import { useExpertPoolStore } from '../expert-store';
 
   /** 抽取类型选项（对应三师角色，默认勾选规划师+评估师，对齐设计稿） */
   const TYPE_OPTIONS = [
@@ -182,91 +186,6 @@
     value: f,
   }));
 
-  /** 专家候补池（占位数据，接入接口后替换为 loadCandidates()）；field 数组标记可抽取的类型 */
-  interface Candidate {
-    id: number;
-    name: string;
-    avatar: string;
-    title: string;
-    field: string;
-    org: string;
-    resume: string;
-    phone: string;
-    types: string[];
-  }
-
-  const RESUME_TEXT =
-    '信息安全及项目管理 2001-2003山东正中计算机网络技术咨询有限公司任监理工程师; 2004年1月至今成都久信信息技术股份有限公司副总经理、...';
-
-  const CANDIDATE_POOL: Candidate[] = [
-    {
-      id: 1,
-      name: '李坤林',
-      avatar: '',
-      title: '正高级',
-      field: '城市规划',
-      org: '中国城市规划设计研究院',
-      resume: RESUME_TEXT,
-      phone: '18571455948',
-      types: ['planner'],
-    },
-    {
-      id: 2,
-      name: '梅磊',
-      avatar: '',
-      title: '高级',
-      field: '建筑设计',
-      org: '中南建筑设计院',
-      resume: RESUME_TEXT,
-      phone: '18571455948',
-      types: ['architect'],
-    },
-    {
-      id: 3,
-      name: '程素华',
-      avatar: '',
-      title: '高级',
-      field: '市政工程',
-      org: '武汉设计咨询集团有限公司',
-      resume: RESUME_TEXT,
-      phone: '18571455948',
-      types: ['assessor'],
-    },
-    {
-      id: 4,
-      name: '王建国',
-      avatar: '',
-      title: '正高级',
-      field: '城市规划',
-      org: '武汉大学城市设计学院',
-      resume: RESUME_TEXT,
-      phone: '13971234567',
-      types: ['planner', 'assessor'],
-    },
-    {
-      id: 5,
-      name: '陈晓峰',
-      avatar: '',
-      title: '高级',
-      field: '建筑设计',
-      org: '华中科技大学建筑与城市规划学院',
-      resume: RESUME_TEXT,
-      phone: '13876543210',
-      types: ['architect'],
-    },
-    {
-      id: 6,
-      name: '刘雅婷',
-      avatar: '',
-      title: '高级',
-      field: '园林景观',
-      org: '武汉市园林建筑规划设计院',
-      resume: RESUME_TEXT,
-      phone: '13657112233',
-      types: ['architect', 'assessor'],
-    },
-  ];
-
   /** 抽取类型勾选状态（key → 是否勾选；默认勾选规划师+评估师，对齐设计稿） */
   const typeChecked = reactive<Record<string, boolean>>({ planner: true, architect: false, assessor: true });
 
@@ -281,21 +200,28 @@
   const checkedTypes = () => TYPE_OPTIONS.filter((o) => typeChecked[o.value]).map((o) => o.value);
 
   /** 抽取结果（当前展示的专家卡片） */
-  const results = ref<Candidate[]>([]);
+  const results = ref<Expert[]>([]);
   /** 抽取中 loading */
   const drawing = ref(false);
 
   const { showMessage } = useMessage();
 
-  /** 从候补池随机抽 count 名（按勾选类型过滤；avoidDrawn 时排除已展示者），接口就绪后替换为接口调用 */
-  function drawFromPool(count: number, excludeIds: number[] = []): Candidate[] {
+  /** 三师库共享 store（Pinia） */
+  const expertStore = useExpertPoolStore();
+
+  /** 三师角色 → 专业领域映射（占位：规划师=城市规划，建筑师=建筑学/园林景观，评估师=市政工程等） */
+  const TYPE_FIELD_MAP: Record<string, string[]> = {
+    planner: ['城市规划'],
+    architect: ['建筑学', '园林景观'],
+    assessor: ['市政工程', '交通规划', '环境科学'],
+  };
+
+  /** 从共享专家库随机抽 count 名（走 store action；专业领域 = 勾选类型映射 ∩ 所选领域，avoidDrawn 时排除已展示者） */
+  function drawFromPool(count: number, excludeIds: number[] = []): Expert[] {
     const types = checkedTypes();
-    let pool = CANDIDATE_POOL.filter((c) => c.types.some((t) => types.includes(t)));
-    if (query.field) pool = pool.filter((c) => c.field === query.field);
-    if (query.avoidDrawn) pool = pool.filter((c) => !excludeIds.includes(c.id));
-    // 洗牌取前 count
-    const shuffled = [...pool].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, count);
+    const fields = types.flatMap((t) => TYPE_FIELD_MAP[t] ?? []);
+    const effectiveFields = query.field ? fields.filter((f) => f === query.field) : fields;
+    return expertStore.drawExperts(count, effectiveFields, query.avoidDrawn ? excludeIds : []);
   }
 
   /** 抽取 / 整批随机更换：抽 3 名展示 */
@@ -317,7 +243,7 @@
   }
 
   /** 单卡随机更换：保持其余两张不动，只换这一张 */
-  function replaceOne(expert: Candidate) {
+  function replaceOne(expert: Expert) {
     const excludeIds = [...results.value.map((r) => r.id), expert.id];
     const [replacement] = drawFromPool(1, excludeIds);
     if (!replacement) {
@@ -328,7 +254,7 @@
   }
 
   /** 指定人员（TODO: 打开三师库人员选择弹窗，选中后替换该卡） */
-  function assignExpert(_expert: Candidate) {
+  function assignExpert(_expert: Expert) {
     showMessage('指定人员：待接入三师库人员选择');
   }
 

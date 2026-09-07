@@ -94,6 +94,9 @@ export const useUserStore = defineStore('app-user', {
         info.homePath = res.desktopUrl;
         info.roleList = res.roleList;
         info.postList = res.postList;
+        // 机构/单位名称与公司（登录返回顶层字段，评价单位等场景用）
+        info.officeName = res.officeName;
+        info.company = res.company;
       }
       this.userInfo = info;
       this.lastUpdateTime = new Date().getTime();

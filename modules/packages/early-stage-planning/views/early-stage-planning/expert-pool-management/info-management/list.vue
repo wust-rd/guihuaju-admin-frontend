@@ -60,21 +60,19 @@
   import { useDrawer } from '@jeesite/core/components/Drawer';
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
   import { Icon } from '@jeesite/core/components/Icon';
-  import type { Expert } from './expert-mock';
-  import { MOCK_EXPERTS, statOf } from './expert-mock';
+  import { useExpertPoolStore } from '../expert-store';
   import ExpertForm from './form.vue';
 
   const { showMessage } = useMessage();
 
-  /** 列表数据（内存副本：新增/修改/删除直接改它，刷新页面恢复初始假数据） */
-  const experts = ref<Expert[]>([...MOCK_EXPERTS]);
+  /** 三师库共享 store（Pinia）：三个子模块同一套专家数据 */
+  const expertStore = useExpertPoolStore();
 
-  /** 统计卡（随列表实时统计） */
-  const stats = computed(() => statOf(experts.value));
+  /** 统计卡（store getter 实时派生：本页或其它子模块的变更都会联动） */
   const statCards = computed(() => [
-    { label: '入库专家总数', value: stats.value.total },
-    { label: '正高级工程师', value: stats.value.senior },
-    { label: '已入选三师', value: stats.value.selected },
+    { label: '入库专家总数', value: expertStore.expertStats.total },
+    { label: '正高级工程师', value: expertStore.expertStats.senior },
+    { label: '已入选三师', value: expertStore.expertStats.selected },
   ]);
 
   /** 表格列（对齐原型：姓名/性别/年龄/电话/身份证/专业领域/职称/单位/单位性质/入库时间/是否入选/操作） */
@@ -110,7 +108,7 @@
   const searchKeyword = ref<Recordable>({});
 
   const [registerTable, { setTableData }] = useTable({
-    dataSource: experts.value,
+    dataSource: expertStore.experts,
     columns,
     actionColumn,
     showTableSetting: true,
@@ -137,26 +135,17 @@
         },
       ],
     },
-    // 无后端：查询/重置在本地过滤
+    // 无后端：查询/重置走 store 本地过滤
     handleSearchInfoFn: (params: Recordable) => {
       searchKeyword.value = { ...params };
-      setTableData(filtered());
+      setTableData(expertStore.queryExperts(params));
       return params;
     },
   });
 
-  /** 按搜索条件过滤（name/org 模糊，selected 精确） */
-  function filtered(): Expert[] {
-    const name = String(searchKeyword.value.name ?? '').trim();
-    const org = String(searchKeyword.value.org ?? '').trim();
-    const { selected } = searchKeyword.value;
-    return experts.value.filter((e) => {
-      if (name && !e.name.includes(name)) return false;
-      if (org && !e.org.includes(org)) return false;
-      if (selected === 'yes' && !e.selected) return false;
-      if (selected === 'no' && e.selected) return false;
-      return true;
-    });
+  /** 当前条件下重新加载表格（增删改后调用） */
+  function refreshTable() {
+    setTableData(expertStore.queryExperts(searchKeyword.value));
   }
 
   const [registerDrawer, { openDrawer, setDrawerProps }] = useDrawer();
@@ -167,29 +156,22 @@
     openDrawer(true, record);
   }
 
-  /** 表单保存回调：新增插到最前、修改原地合并（均为内存操作，TODO 后端就绪后调接口） */
+  /** 表单保存回调：新增/修改走 store action（TODO 后端就绪后 action 内改为接口提交） */
   function handleSuccess(data: Recordable) {
     if (data.isNewRecord) {
-      experts.value = [
-        {
-          ...data,
-          id: experts.value.reduce((max, e) => Math.max(max, e.id), 0) + 1,
-          joinDate: data.joinDate ?? '2026-10-12',
-        } as Expert,
-        ...experts.value,
-      ];
+      expertStore.addExpert(data);
       showMessage('新增成功（本地演示，未持久化）');
     } else {
-      experts.value = experts.value.map((e) => (e.id === data.id ? { ...e, ...data } : e));
+      expertStore.updateExpert(data.id, data);
       showMessage('保存成功（本地演示，未持久化）');
     }
-    setTableData(filtered());
+    refreshTable();
   }
 
-  /** 删除（内存操作，TODO 后端就绪后调接口） */
+  /** 删除（走 store action，联动清理评价记录；TODO 后端就绪后改为接口提交） */
   function handleDelete(record: Recordable) {
-    experts.value = experts.value.filter((e) => e.id !== record.id);
-    setTableData(filtered());
+    expertStore.removeExpert(record.id);
+    refreshTable();
     showMessage('删除成功（本地演示，未持久化）');
   }
 

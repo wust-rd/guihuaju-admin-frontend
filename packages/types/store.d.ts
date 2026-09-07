@@ -44,6 +44,10 @@ export interface UserInfo {
   roleList?: any[];
   postList?: any[];
   homePath?: string;
+  // 机构/单位名称（登录返回 officeName 存入，评价单位等场景用）
+  officeName?: string;
+  // 公司名称
+  company?: string;
   // roles: RoleInfo[];
 }
 
