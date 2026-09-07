@@ -22,7 +22,14 @@ modules/packages/early-stage-planning/
         │   ├── list.vue                 # 左树右表(对齐 sys/menu):BasicTree 分类导航 + 统计卡片 + 表格
         │   └── form.vue                 # 新增/编辑/查看抽屉（含上传文件与版本变更记录）
         ├── qa-helper/
-        │   └── list.vue                 # 政策问答助手（多轮对话 + SSE 流式输出 + 引用折叠面板）
+        │   ├── list.vue                 # 政策问答助手（ai-elements-vue 组件组合,左侧对话历史侧栏）
+        │   └── components/              # ai-elements-vue 源码级移植(UnoCSS + antd 底座,无新增依赖)
+        │       ├── cn.ts                # 类名拼接(shadcn cn 的零依赖版)
+        │       ├── conversation/        # 粘底滚动容器/内容列/空态/回到底部按钮
+        │       ├── message/             # 消息行/气泡(用户蓝实底、AI 蓝浅底,无头像)
+        │       ├── prompt-input/        # 表单化输入区(context 注入:自增高文本域/圆形发送按钮)
+        │       ├── suggestion/          # 建议问题胶囊
+        │       └── loader/              # 加载指示
         ├── semantic-matching/
         │   └── index.vue                # 语义关联度匹配（薄壳，mode="semantic"）
         ├── keyword-search.vue           # 关键字查询（薄壳单文件，mode="keyword"；路由无 /index 后缀）
@@ -44,11 +51,14 @@ modules/packages/early-stage-planning/
   项目情况多行文本 + 匹配；表格多一列相似度（Progress + 百分比）。
 - **关键字查询** `/early-stage-planning/policy-management/keyword-search`：
   关键词单行输入 + 搜索；留空搜索 = 查看全部已入库政策（初始空态，点搜索后才出结果）。
-- **政策问答助手** `/early-stage-planning/policy-management/qa-helper/list`：左树右表式布局——
-  左侧「对话历史」侧栏（新对话/重命名/删除，localStorage 持久化，kd_server 无会话列表接口故
-  消息记录存前端）、右侧对话区撑满内容区高度：多轮对话（conversation_id 续接）、流式输出
-  （SSE 逐段打字，可关闭）、回答附带引用折叠面板（政策元数据 + 命中片段 + 打开文件）、
-  引用条数 top_k 设置；接口层 `api/.../qa.ts`（流式用原生 fetch 解析 SSE，非流式走 defHttp）。
+- **政策问答助手** `/early-stage-planning/policy-management/qa-helper/list`：对话区按
+  ai-elements-vue（shadcn-vue 体系的 AI 组件库，github.com/vuepont/ai-elements-vue）的组件分解
+  与写法实现——因该库依赖 Tailwind CSS Variables/reka-ui/lucide，与本项目 UnoCSS+antdv-next 栈不兼容，
+  故**源码级移植**到 `qa-helper/components/`（组件名/结构/写法保持一致，底座以 antd 替代 shadcn，
+  原子类 UnoCSS 兼容）。能力：左侧对话历史侧栏（新对话/重命名/删除，localStorage 持久化）、
+  粘底滚动 + 回到底部按钮、流式打字机（强制 SSE）、建议问题空态（居中）、
+  引用卡片（编号 + 政策标题/单位/文号/层级等元信息 + 片段摘要两行 + 打开文件）；
+  接口层 `api/.../qa.ts`。
 - 检索两页共用 `shared/policy-search.vue`（项目范式：PageWrapper #sidebar 三张侧栏卡片[历史/收藏/订阅]
   + 检索区 Card + 标准 BasicTable[formConfig：层级/类型/领域/区域/发布日期区间/排序]；标题列下方展示
   命中片段并按查询词高亮；查看走 `shared/detail-drawer.vue` 详情抽屉[Description 元数据/命中片段/版本
