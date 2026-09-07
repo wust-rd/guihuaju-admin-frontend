@@ -2,14 +2,14 @@
   ifco —— 项目进展统计（/ifco/progress-statistics/list）
 
   页面结构:Card 工具栏(填报年份/填报季度 | 导出[按钮保留,功能待做])
-  → RadioGroup(总览 + 13 个行政区报送单位,按钮样式可换行)
+  → RadioGroup(全武汉市 + 13 个行政区报送单位,按钮样式可换行)
   → 只读转置表格:行 = 指标,列 = 类目(与填报页总览同构:
     固定左四列 + 7 个简单类目单列 + 嵌套类目拆三个二级子列 + 最左总计)。
 
   口径:
   - 只查询 + 导出,整页只读(无编辑/新增/带入/保存);
   - 点报送单位 = 该单位的分表(等同填报页选中该单位时的总览);
-  - 点总览 = 全部报送单位合计(全市口径);
+  - 点「全武汉市」= 全部报送单位合计(全市口径);
   - count 行(城市更新项目总数) = 范围内各单位项目列数之和;
     total 行(新增就业岗位) = 范围内各单位录入值之和;汇总行随构成行求和;
   - 数据与填报页共享同一份内存假数据仓库
@@ -96,14 +96,14 @@
   // dayjs 的 quarter() 需 quarterOfYear 插件，这里用 month() 推导当前季度
   const quarter = ref(String(Math.floor(dateUtil().month() / 3) + 1));
 
-  // ── 统计范围:总览(全市) + 各报送单位 ────────────────────────────────
+  // ── 统计范围:全武汉市(全市合计) + 各报送单位 ──────────────────────────
   const unitOptions = [
-    { label: '总览', value: 'overview' },
+    { label: '全武汉市', value: 'overview' },
     ...REPORT_UNITS.map((name) => ({ label: name, value: name })),
   ];
   const activeUnit = ref('overview');
 
-  /** 当前统计范围内的单位数据集(总览 = 全部单位;单选 = 该单位;懒初始化) */
+  /** 当前统计范围内的单位数据集(全武汉市 = 全部单位;单选 = 该单位;懒初始化) */
   const statUnits = computed<PeriodFillData[]>(() => {
     const key = toPeriodKey(year.value, quarter.value);
     const units = activeUnit.value === 'overview' ? [...REPORT_UNITS] : [activeUnit.value];
@@ -112,7 +112,7 @@
 
   const tableCardTitle = computed(() => {
     const period = `${year.value}年 ${quarterLabel(quarter.value)}`;
-    return activeUnit.value === 'overview' ? `${period} 总览` : `${period} · ${activeUnit.value}`;
+    return activeUnit.value === 'overview' ? `${period} · 全武汉市` : `${period} · ${activeUnit.value}`;
   });
 
   // ── 表格行(静态指标清单) ─────────────────────────────────────────────
@@ -126,8 +126,7 @@
 
   /** 自动行(汇总/项目数)加粗只读 */
   const sumRowOnCell = (record: StatRow) => ({
-    className:
-      record.kind === 'sum' || record.kind === 'count' ? 'progress-stat-row-sum' : undefined,
+    className: record.kind === 'sum' || record.kind === 'count' ? 'progress-stat-row-sum' : undefined,
   });
 
   /** 未填内容与 0 一律置空(不补斜杠、不补 0) */

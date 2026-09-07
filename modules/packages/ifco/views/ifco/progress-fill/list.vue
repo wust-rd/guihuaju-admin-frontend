@@ -339,7 +339,7 @@
     return renderDisplay(cellValue(item, col));
   }
 
-  /** 项目列头:「名称 + 编辑/删除图标」 */
+  /** 项目列头:「名称 + 编辑/删除图标」;编辑态下的编辑按钮换成保存 icon */
   function renderProjectHeader(col: ProjectColumn) {
     const editing = editingColKey.value === col.key;
     const deletable = !(col.imported && quarter.value !== '1');
@@ -348,7 +348,7 @@
       h('span', { class: 'flex shrink-0 items-center gap-1' }, [
         h(Tooltip, { title: editing ? '完成编辑' : '编辑本列' }, () =>
           h(Icon, {
-            icon: 'ant-design:edit-outlined',
+            icon: editing ? 'ant-design:save-outlined' : 'ant-design:edit-outlined',
             class: 'progress-fill-icon-edit',
             onClick: () => toggleEdit(col),
           }),
