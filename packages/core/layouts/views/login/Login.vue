@@ -1,6 +1,6 @@
 <template>
   <div class="jeesite-login relative h-full w-full bg-light-400 px-4">
-    <AppDarkModeToggle class="enter-x absolute right-12 top-5" v-if="!sessionTimeout" />
+    <AppDarkModeToggle class="enter-x absolute right-15 top-[22px]" v-if="!sessionTimeout" />
 
     <span class="-enter-x lg:hidden">
       <AppLogo :alwaysShowTitle="true" />
@@ -56,7 +56,7 @@
   import { useI18n } from '@jeesite/core/hooks/web/useI18n';
   import { LoginStateEnum, useLoginState } from './useLogin';
 
-  const LoginForm = createAsyncComponent(() => import('./LoginForm.vue'));
+  const LoginForm = createAsyncComponent(() => import('./LoginForm.vue'), { loading: true });
   const MobileForm = createAsyncComponent(() => import('./MobileForm.vue'));
   const QrCodeForm = createAsyncComponent(() => import('./QrCodeForm.vue'));
   const ForgetPasswordForm = createAsyncComponent(() => import('./ForgetPasswordForm.vue'));

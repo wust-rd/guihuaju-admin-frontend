@@ -62,5 +62,5 @@ export const Light = defineComponent({
   },
 });
 
-// motion 版本：可直接驱动动画的荧光条（motion-v 的 create 类型不保留组件 props，用 any 断言，运行时无影响）
-export const MotionLight = motion.create(Light) as any;
+// motion 版本：可直接驱动动画的荧光条（motion-v 2.4.2 起 create 的入参/返回类型均不兼容带 props 的组件，用 any 断言，运行时无影响）
+export const MotionLight = motion.create(Light as any) as any;

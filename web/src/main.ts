@@ -19,7 +19,6 @@ import { setupRouter, router } from '@jeesite/core/router';
 import { setupRouterGuard } from '@jeesite/core/router/guard';
 import { setupStore } from '@jeesite/core/store';
 import { setupDisplay } from '@jeesite/display';
-import { setupDForm } from '@jeesite/dfm';
 
 async function bootstrap() {
   const app = createApp(App);
@@ -53,9 +52,6 @@ async function bootstrap() {
 
   // 先挂载应用，让用户尽快看到页面
   app.mount('#app');
-
-  // 动态表单设计器（延迟加载）
-  setupDForm();
 }
 
 // 仅开发模式显示

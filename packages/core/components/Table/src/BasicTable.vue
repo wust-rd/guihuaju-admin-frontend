@@ -148,8 +148,8 @@
   const tableRef = shallowRef<ComponentRef>(null);
   const tableData = ref<TableRecordable[]>([]);
 
-  const wrapRef = shallowRef<ComponentRef>(null);
-  const formRef = shallowRef<InstanceType<typeof BasicForm>>();
+  const wrapRef = shallowRef<ElRef>(null);
+  const formRef = shallowRef<InstanceType<typeof BasicForm> | null>(null);
   const innerPropsRef = ref<Partial<BasicTableProps>>();
 
   const [registerForm, formActions] = useForm();
@@ -497,7 +497,7 @@
       border-radius: 10px;
 
       .ant-table {
-        &.ant-table-bordered .ant-table-container {
+        .ant-table-container {
           border-bottom-left-radius: 8px !important;
           border-bottom-right-radius: 8px !important;
           border: 1px solid @table-border-color !important;
@@ -512,17 +512,6 @@
           padding: 6px 0 8px !important;
           border: none !important;
         }
-
-        //&.ant-table-bordered > .ant-table-container {
-        //  & > .ant-table-header > table,
-        //  & > .ant-table-content > table {
-        //    border-top: 0 !important;
-        //
-        //    & > thead > tr > th:last-child {
-        //      border-right: 0 !important;
-        //    }
-        //  }
-        //}
 
         .ant-table-column-sorter {
           margin: 0 -4px 0 -1px;
@@ -746,15 +735,13 @@
       }
 
       .ant-table-wrapper .ant-table {
-        &.ant-table-bordered {
-          &.ant-table-small {
-            > .ant-table-container {
-              > .ant-table-content,
-              > .ant-table-body {
-                > table > tbody > tr > td {
-                  > .ant-table-expanded-row-fixed {
-                    margin: -15px -9px;
-                  }
+        &.ant-table-small {
+          > .ant-table-container {
+            > .ant-table-content,
+            > .ant-table-body {
+              > table > tbody > tr > td {
+                > .ant-table-expanded-row-fixed {
+                  margin: -15px -9px;
                 }
               }
             }

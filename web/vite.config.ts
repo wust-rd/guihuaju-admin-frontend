@@ -50,6 +50,13 @@ export default defineConfig(async ({ command, mode }: ConfigEnv) => {
     },
     build: createBuildOptions(viteEnv),
     css: createCSSOptions(),
+    optimizeDeps: {
+      rolldownOptions: {
+        external: (source: string) => {
+          return /^@jeesite\/.*$/.test(source);
+        },
+      },
+    },
     resolve: {
       alias: [
         // 桥接 npm maplibre-gl → 全局 maplibre-gl-enhance (window.maplibregl)

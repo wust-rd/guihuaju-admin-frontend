@@ -22,7 +22,6 @@
   import type { editor } from 'monaco-editor';
   import * as monaco from 'monaco-editor';
   import { Icon } from '@jeesite/core/components/Icon';
-  // import { useWindowSizeFn } from '@jeesite/core/hooks/event/useWindowSizeFn';
   import { useAppStore } from '@jeesite/core/store/modules/app';
   import { useI18n } from '@jeesite/core/hooks/web/useI18n';
 
@@ -42,7 +41,7 @@
     config: () => ({
       selectOnLineNumbers: true,
       minimap: { enabled: false },
-      padding: { top: 6, bottom: 6 },
+      padding: { top: 5, bottom: 5 },
     }),
     language: 'json',
     lineNumbers: 'on',
@@ -51,7 +50,6 @@
     theme: 'vs-light',
     allowFullscreen: true,
     bordered: true,
-    height: 260,
   });
 
   const emit = defineEmits(['update:value', 'change']);
@@ -70,6 +68,7 @@
       fontSize: 14,
       language: props.language,
       lineNumbers: props.lineNumbers,
+      lineNumbersMinChars: 4,
       readOnly: props.readonly,
       scrollBeyondLastLine: false,
       theme: props.theme,
@@ -113,6 +112,7 @@
       { immediate: true },
     );
 
+    showHideLineNumber();
     // redoEditorHeight();
   });
 
@@ -157,6 +157,7 @@
     const style: any = {};
     if (props.height) {
       style.height = `${props.height}px`;
+      showHideLineNumber();
     }
     if (isFullScreen.value) {
       Object.assign(style, {
@@ -172,15 +173,14 @@
     return style;
   });
 
-  // function redoEditorHeight() {
-  //   if (!editContainer.value) return;
-  //   let container = editContainer.value.parentElement as HTMLElement;
-  //   let newHeight = container.parentElement?.clientHeight;
-  //   container.style.height = newHeight + 'px';
-  //   monacoEditor?.layout();
-  // }
-  //
-  // useWindowSizeFn(redoEditorHeight);
+  function showHideLineNumber() {
+    if (!props.height) return;
+    const multiLine = props.height > 50;
+    monacoEditor?.updateOptions({
+      folding: multiLine,
+      lineNumbers: multiLine ? 'on' : 'off',
+    });
+  }
 
   defineExpose({
     setLanguage,
