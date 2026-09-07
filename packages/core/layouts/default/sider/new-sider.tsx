@@ -251,8 +251,8 @@ export const NewSider = defineComponent({
               activeLeaf
                 ? 'bg-gradient-to-tl from-[rgba(2,137,255,0.21)] via-[rgba(0,191,255,0.7)] to-[rgba(0,215,255,0.7)]'
                 : '',
-              // 分支（有子级）加背景做区分标记
-              kids ? 'bg-[#0f1e33]' : '',
+              // 一级菜单行统一加深色底，子级（kids）不加，层级视觉才协调
+              level === 0 ? 'bg-[#0f1e33]' : '',
             )}
             style={{ paddingLeft: `${level * 10}px` }}
             onClick={() => (kids ? toggleOpen(leaf) : handleNavigate(leaf))}
