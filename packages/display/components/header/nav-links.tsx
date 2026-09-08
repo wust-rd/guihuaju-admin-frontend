@@ -15,7 +15,7 @@ export const NavLinks = defineComponent({
       { label: '前期规划', icon: 'i-ri-route-fill rotate-90', to: '/early-stage-planning/overview/index' },
       { label: '投融建运', icon: 'i-famicons-folder-open', to: '/ifco/overview/index' },
       { label: '征收管理', icon: 'i-ri-target-fill', to: '/expropriation-management/overview/index' },
-      { label: '名城保护', icon: 'i-ri-ancient-gate-fill', to: '/urban-protection/overview/relic-map/index' },
+      { label: '名城保护', icon: 'i-ri-ancient-gate-fill', to: '/urban-protection/overview/index' },
     ];
 
     return () => (
