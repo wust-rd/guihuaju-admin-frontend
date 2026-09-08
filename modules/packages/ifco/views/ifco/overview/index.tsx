@@ -5,7 +5,7 @@ import { GlassRing } from '@jeesite/display/components/glass-ring';
 import { GlowTitle2 } from '@jeesite/display/components/glow-title/title2';
 import { DisplayPageLayout } from '@jeesite/display/components/page-layout';
 import { LayerControls } from '@jeesite/display/components/layer-controls';
-import { VMap, VMapControls } from '@jeesite/vmap';
+import { VMap, VMapControls, tiandituStyle, tiandituMapOptions } from '@jeesite/vmap';
 import { defineComponent, onBeforeUnmount, ref, shallowRef } from 'vue';
 import { RouterLink } from 'vue-router';
 import { colors } from '@jeesite/core/libs/colors';
@@ -21,50 +21,11 @@ import type { SelectedPolygon } from './polygon-types';
 import { ProjectProgress } from '@jeesite/display/components/ifco/project-progress';
 import { useAppStore } from '@jeesite/core/store/modules/app';
 
-/** 天地图子域名列表（t0~t7，多域名并行请求，突破浏览器并发限制） */
-const TIANDITU_SUBDOMAINS = ['0', '1', '2', '3', '4', '5', '6', '7'];
-
-/**
- * 构建天地图瓦片 URL 数组（DataServer REST 接口，CGCS2000 经纬度 _c 系列，EPSG:4490）
- * 配合 Map 的 crs: 'EPSG:4490' 使用；layer 传 'vec_c'/'cva_c'
- */
-function tiandituTileUrls(layer: string): string[] {
-  return TIANDITU_SUBDOMAINS.map(
-    (s) =>
-      `https://t${s}.tianditu.gov.cn/DataServer?T=${layer}&X={x}&Y={y}&L={z}&tk=${import.meta.env.VITE_TIANDITU_TOKEN}`,
-  );
-}
-
 /** OSS 图片基础地址 */
 const OSS_BASE = 'https://zhugengju-public.oss-cn-wuhan-lr.aliyuncs.com/片区策划';
 
 // 片区概况
 const PIANQU_IMG = `${OSS_BASE}/片区概况.webp`;
-
-/** 天地图底图：矢量底图 + 中文注记叠加 */
-const tiandituStyle: maplibregl.StyleSpecification = {
-  version: 8,
-  sources: {
-    'tianditu-vec': {
-      type: 'raster',
-      tiles: tiandituTileUrls('vec_c'),
-      tileSize: 256,
-      minzoom: 2,
-      maxzoom: 18,
-    },
-    'tianditu-cva': {
-      type: 'raster',
-      tiles: tiandituTileUrls('cva_c'),
-      tileSize: 256,
-      minzoom: 2,
-      maxzoom: 18,
-    },
-  },
-  layers: [
-    { id: 'tianditu-vec', type: 'raster', source: 'tianditu-vec' },
-    { id: 'tianditu-cva', type: 'raster', source: 'tianditu-cva' },
-  ],
-};
 
 export default defineComponent({
   name: 'DisplayIfco',
@@ -76,13 +37,6 @@ export default defineComponent({
     onBeforeUnmount(() => {
       appStore.setImmersive(false);
     });
-
-    /** 天地图原生构造选项（_c 系列瓦片为 CGCS2000 经纬度坐标系，CRS 切 EPSG:4490） */
-    const mapOptions: Partial<maplibregl.MapOptions> = {
-      crs: 'EPSG:4490',
-      center: [114.2761773, 30.5344542] as [number, number], // 数据范围中心（武汉）
-      zoom: 11,
-    };
 
     /** 右侧抽屉（知音地块点击打开） */
     const drawerVisible = ref(false);
@@ -129,7 +83,7 @@ export default defineComponent({
           right: () => (
             <>
               {/* 地图：VMap 组件内部创建/销毁 MapLibre 实例，crs/center/zoom 走 options prop */}
-              <VMap style={tiandituStyle} options={mapOptions}>
+              <VMap style={tiandituStyle} options={tiandituMapOptions}>
                 <VMapControls class="absolute right-24px bottom-24px z-10" />
                 {/* 图层 / 交互逻辑子组件：必须在 VMap 插槽内才能 useMap；selected 联动选中高亮 */}
                 <IfcoMapLayers

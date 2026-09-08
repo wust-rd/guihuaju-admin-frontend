@@ -1,5 +1,14 @@
 import { cn } from '@jeesite/core/libs';
-import { useMap, useMapLayer, VMap, VMapControls, VMarker, VMarkerContent } from '@jeesite/vmap';
+import {
+  useMap,
+  useMapLayer,
+  VMap,
+  VMapControls,
+  VMarker,
+  VMarkerContent,
+  tiandituStyle,
+  tiandituMapOptions,
+} from '@jeesite/vmap';
 import { computed, defineComponent, onBeforeUnmount, onMounted, reactive, shallowRef, watch, type PropType } from 'vue';
 import {
   RELIC_LEVELS,
@@ -25,45 +34,6 @@ import { UrbanProtectionTrendLine } from './trend-line';
 import { UrbanProtectionStatusDonut } from './status-donut';
 import { RightInfoPanels } from './right-info-panels';
 
-/** 天地图子域名列表（t0~t7，多域名并行请求，突破浏览器并发限制） */
-const TIANDITU_SUBDOMAINS = ['0', '1', '2', '3', '4', '5', '6', '7'];
-
-/**
- * 构建天地图瓦片 URL 数组（DataServer REST 接口，CGCS2000 经纬度 _c 系列，EPSG:4490）
- * 配合 Map 的 crs: 'EPSG:4490' 使用；layer 传 'vec_c'/'cva_c'
- */
-function tiandituTileUrls(layer: string): string[] {
-  return TIANDITU_SUBDOMAINS.map(
-    (s) =>
-      `https://t${s}.tianditu.gov.cn/DataServer?T=${layer}&X={x}&Y={y}&L={z}&tk=${import.meta.env.VITE_TIANDITU_TOKEN}`,
-  );
-}
-
-/** 天地图底图：矢量底图 + 中文注记叠加 */
-const tiandituStyle: maplibregl.StyleSpecification = {
-  version: 8,
-  sources: {
-    'tianditu-vec': {
-      type: 'raster',
-      tiles: tiandituTileUrls('vec_c'),
-      tileSize: 256,
-      minzoom: 2,
-      maxzoom: 18,
-    },
-    'tianditu-cva': {
-      type: 'raster',
-      tiles: tiandituTileUrls('cva_c'),
-      tileSize: 256,
-      minzoom: 2,
-      maxzoom: 18,
-    },
-  },
-  layers: [
-    { id: 'tianditu-vec', type: 'raster', source: 'tianditu-vec' },
-    { id: 'tianditu-cva', type: 'raster', source: 'tianditu-cva' },
-  ],
-};
-
 /** 各级别点位尺寸（国家级最大、市级最小，一眼可分） */
 const LEVEL_DOT_SIZE: Record<string, string> = {
   [RELIC_LEVELS[0].value]: 'size-20px',
@@ -74,23 +44,15 @@ const DEFAULT_DOT_SIZE = 'size-12px';
 /**
  * 地图逻辑子组件（纯逻辑，不渲染 DOM）：
  * 必须在 <VMap> 插槽内使用 —— useMap() 依赖 VMap 注入的地图上下文。
- * - 数据就绪后首次 fitBounds 到「文物点位 + 名城范围面」联合范围；
  * - 点击地图空白处（非 Marker / 控件 / 范围面）→ 通知父级关闭右侧信息卡片。
  */
 const RelicMapLogic = defineComponent({
   name: 'RelicMapLogic',
-  props: {
-    /** 全量数据联合经纬度范围 [minLng, minLat, maxLng, maxLat]（数据就绪前为 null） */
-    fitRange: { type: Array as unknown as PropType<[number, number, number, number] | null>, default: null },
-  },
   emits: {
     mapClick: () => true,
   },
-  setup(props, { emit }) {
+  setup(_props, { emit }) {
     const { map, isLoaded } = useMap();
-
-    /** 仅在数据首次就绪时缩放到数据范围，此后不再打断用户交互 */
-    let fitted = false;
 
     // 点击地图空白处：关闭右侧信息卡片。
     // Marker / 控件是地图容器内的 DOM，click 会冒泡到容器再触发 map click，
@@ -106,26 +68,6 @@ const RelicMapLogic = defineComponent({
       m.on('click', onClick);
       return () => m.off('click', onClick);
     });
-
-    // 数据 / 地图任一就绪即尝试 fitBounds（两个都是异步完成，先后不定）
-    watch(
-      [() => props.fitRange, map, isLoaded],
-      () => {
-        if (fitted || !props.fitRange) return;
-        const m = map.value;
-        if (!m || !isLoaded.value) return;
-        fitted = true;
-        const [minLng, minLat, maxLng, maxLat] = props.fitRange;
-        m.fitBounds(
-          [
-            [minLng, minLat],
-            [maxLng, maxLat],
-          ],
-          { padding: 80, duration: 0 },
-        );
-      },
-      { immediate: true },
-    );
 
     return () => null;
   },
@@ -310,40 +252,6 @@ export default defineComponent({
     /** 当前选中范围面：点击范围面设置，展示右侧信息卡片（与文物卡片互斥） */
     const selectedScope = shallowRef<SelectedCityScope | null>(null);
 
-    /** 全量数据联合范围（文物点位 + 范围面 bbox），首次就绪后 fitBounds 用；坐标 0 视为解析失败忽略 */
-    const fitRange = computed<[number, number, number, number] | null>(() => {
-      let minLng = Infinity;
-      let minLat = Infinity;
-      let maxLng = -Infinity;
-      let maxLat = -Infinity;
-
-      for (const { lng, lat } of relics.value) {
-        if (!lng || !lat) continue;
-        if (lng < minLng) minLng = lng;
-        if (lng > maxLng) maxLng = lng;
-        if (lat < minLat) minLat = lat;
-        if (lat > maxLat) maxLat = lat;
-      }
-
-      for (const { bounds } of scopeLayers.value) {
-        if (!bounds) continue;
-        const [bMinLng, bMinLat, bMaxLng, bMaxLat] = bounds;
-        if (bMinLng < minLng) minLng = bMinLng;
-        if (bMinLat < minLat) minLat = bMinLat;
-        if (bMaxLng > maxLng) maxLng = bMaxLng;
-        if (bMaxLat > maxLat) maxLat = bMaxLat;
-      }
-
-      return Number.isFinite(minLng) && Number.isFinite(minLat) ? [minLng, minLat, maxLng, maxLat] : null;
-    });
-
-    /** 天地图原生构造选项（_c 系列瓦片为 CGCS2000 经纬度坐标系，CRS 切 EPSG:4490） */
-    const mapOptions: Partial<maplibregl.MapOptions> = {
-      crs: 'EPSG:4490',
-      center: [114.35, 30.61] as [number, number], // 初始中心（数据就绪后 fitBounds 到全量范围）
-      zoom: 9,
-    };
-
     /** 图例各级别计数（全量数据按级别统计，不随图例显隐变化） */
     const legendRows = computed(() =>
       RELIC_LEVELS.map((level) => ({
@@ -365,11 +273,10 @@ export default defineComponent({
           right: () => (
             <div class="relative size-full overflow-hidden">
               {/* 地图：VMap 组件内部创建/销毁 MapLibre 实例，crs/center/zoom 走 options prop */}
-              <VMap style={tiandituStyle} options={mapOptions}>
+              <VMap style={tiandituStyle} options={tiandituMapOptions}>
                 <VMapControls class="absolute right-24px bottom-24px z-10" />
 
                 <RelicMapLogic
-                  fitRange={fitRange.value}
                   onMapClick={() => {
                     selected.value = null;
                     selectedScope.value = null;

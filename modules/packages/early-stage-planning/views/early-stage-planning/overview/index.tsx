@@ -3,7 +3,6 @@ import { ArtFont } from '@jeesite/display/components/art-font';
 import { CollapseGroups } from '@jeesite/display/components/collapse-groups';
 import { XodItem, XodRow } from '@jeesite/display/components/corner-panel/xod-row';
 import { DropdownSelector } from '@jeesite/display/components/dropdown-selector';
-import { RightDrawer } from '@jeesite/display/components/early-stage-planning/right-drawer';
 import { GlassRing } from '@jeesite/display/components/glass-ring';
 import { type GlowTabItem } from '@jeesite/display/components/glow-tabs';
 import { GlowTitle2 } from '@jeesite/display/components/glow-title/title2';
@@ -14,6 +13,7 @@ import { defineComponent, onBeforeUnmount, ref } from 'vue';
 import { DistrictChart } from './district-chart';
 import { InvestTotalCard } from './invest-total-card';
 import { useAppStore } from '@jeesite/core/store/modules/app';
+import { VMap, VMapControls, tiandituStyle, tiandituMapOptions } from '@jeesite/vmap';
 
 // 区域 tabs：激活项由 RegionTabs 的 svg 发光胶囊指示器表达（按钮本身不再发光）
 const regionTabs: GlowTabItem[] = [
@@ -115,10 +115,12 @@ export default defineComponent({
             </>
           ),
           right: () => (
-            <div class="size-full relative bg-white">
-              <RightDrawer />
-              {/* <AreaOverviewModal /> */}
-            </div>
+            <>
+              {/* 右侧地图：VMap 内部创建/销毁 MapLibre 实例，底图为天地图（矢量 + 中文注记） */}
+              <VMap style={tiandituStyle} options={tiandituMapOptions}>
+                <VMapControls class="absolute right-24px bottom-24px z-10" />
+              </VMap>
+            </>
           ),
         }}
       </DisplayPageLayout>
