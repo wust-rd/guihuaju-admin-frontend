@@ -3,7 +3,7 @@
 
   三师库管理 · 子模块三：对入库专家打分考评。布局对齐原型：
   - 顶部三张排名卡（活跃度/专业覆盖度/评审效率 Top5，绿色渐变条 + 序号 + 姓名 + 得分）；
-  - 下方专家列表（姓名/性别/年龄/联系电话/身份证号/评价次数/三维度得分/操作）；
+  - 下方专家列表（仅展示已入选三师的专家；姓名/性别/年龄/联系电话/身份证号/评价次数/三维度得分/操作）；
   - 操作列「评价」弹出打分 Modal（Rate 半星步进，一颗星 2 分、半颗星 1 分，三维度各 10 分），
     提交生成一条评价记录并实时刷新平均分；「历史记录」跳评价历史页（history.vue）。
   当前后端尚未介入：数据来自本地 evaluation-mock.ts（模块单例，两页共享，刷新页面恢复）。
@@ -16,26 +16,36 @@
   <PageWrapper contentClass="flex flex-col gap-16px">
     <!-- 三张排名卡：活跃度 / 专业覆盖度 / 评审效率 Top5 -->
     <div class="grid grid-cols-3 gap-16px">
-      <div v-for="card in rankCards" :key="card.title" class="bg-white rd-12px b-1 b-solid b-gray-100 p-16px shadow-sm">
-        <div class="text-15px font-600 text-gray-800">{{ card.title }}</div>
+      <div
+        v-for="card in rankCards"
+        :key="card.title"
+        class="bg-white rd-12px b-1 b-solid b-gray-100 p-16px shadow-sm"
+        :style="{ '--accent': card.accent }"
+      >
+        <!-- 标题：左侧彩色竖条 + 标题 -->
+        <div class="flex items-center gap-8px">
+          <span class="h-16px w-4px rd-full" :style="{ background: card.accent }"></span>
+          <span class="text-15px font-600 text-gray-800">{{ card.title }}</span>
+        </div>
 
         <div v-if="card.rows.length === 0" class="flex h-150px items-center justify-center text-13px text-gray-400">
           暂无评价数据
         </div>
-        <div v-else class="mt-10px space-y-10px">
-          <div v-for="(row, i) in card.rows" :key="`${card.title}-${row.name}`" class="flex items-center gap-8px">
-            <span class="w-14px shrink-0 text-right text-13px text-gray-500">{{ i + 1 }}</span>
-            <span class="w-44px shrink-0 truncate text-14px text-gray-800" :title="row.name">{{ row.name }}</span>
-            <div class="h-12px flex-1 rd-2px bg-transparent">
+        <div v-else class="mt-12px space-y-14px">
+          <div v-for="(row, i) in card.rows" :key="`${card.title}-${row.name}`" class="flex items-center gap-10px">
+            <!-- 排名：默认灰色数字，悬停高亮为彩色圆形徽标 -->
+            <span
+              class="rank-badge flex h-22px w-22px shrink-0 items-center justify-center rd-full text-13px font-500 text-gray-500"
+              >{{ i + 1 }}</span
+            >
+            <span class="w-56px shrink-0 truncate text-14px text-gray-800" :title="row.name">{{ row.name }}</span>
+            <div class="h-10px flex-1 rd-full bg-[#EEF2F7] overflow-hidden">
               <div
-                class="h-full rd-2px"
-                :style="{
-                  width: `${(row.score / 10) * 100}%`,
-                  background: 'linear-gradient(90deg, #A3D977 0%, #8CC863 100%)',
-                }"
+                class="h-full rd-full"
+                :style="{ width: `${(row.score / 10) * 100}%`, background: card.barGradient }"
               ></div>
             </div>
-            <span class="w-32px shrink-0 text-right text-13px text-gray-600">{{ row.score.toFixed(1) }}</span>
+            <span class="w-36px shrink-0 text-right text-13px font-500 text-gray-700">{{ row.score.toFixed(1) }}</span>
           </div>
         </div>
       </div>
@@ -158,24 +168,29 @@
   ] as const;
   type RateDimensionKey = (typeof RATE_DIMENSIONS)[number]['key'];
 
-  /** 专家列表行 = 基础信息 + 三维度平均分 + 评价次数（评价/删除记录后自动重算） */
+  /** 专家列表行 = 基础信息 + 三维度平均分 + 评价次数（评价/删除记录后自动重算）
+      仅展示「已入选三师」的专家（随机分配确认选用后进入本列表） */
   const expertRows = computed(() =>
-    expertStore.experts.map((e) => {
-      const avg = expertStore.avgScoreOf(e.id);
-      return {
-        ...e,
-        activityScore: avg.activity,
-        coverageScore: avg.coverage,
-        efficiencyScore: avg.efficiency,
-        evalCount: avg.count,
-      };
-    }),
+    expertStore.experts
+      .filter((e) => e.selected)
+      .map((e) => {
+        const avg = expertStore.avgScoreOf(e.id);
+        return {
+          ...e,
+          activityScore: avg.activity,
+          coverageScore: avg.coverage,
+          efficiencyScore: avg.efficiency,
+          evalCount: avg.count,
+        };
+      }),
   );
 
-  /** 三张排名卡（Top5，无数据显示空态） */
+  /** 三张排名卡（Top5，无数据显示空态）；card 携带本卡主题色 accent 与进度条渐变 barGradient（纯样式） */
   const rankCards = computed(() => [
     {
       title: '活跃度排名',
+      accent: '#3A8EF6',
+      barGradient: 'linear-gradient(90deg, #5AB2FF 0%, #3A8EF6 100%)',
       rows: [...expertRows.value]
         .filter((e) => e.activityScore > 0)
         .sort((a, b) => b.activityScore - a.activityScore)
@@ -184,6 +199,8 @@
     },
     {
       title: '专业覆盖度排名',
+      accent: '#2AB69B',
+      barGradient: 'linear-gradient(90deg, #4ED3B8 0%, #2AB69B 100%)',
       rows: [...expertRows.value]
         .filter((e) => e.coverageScore > 0)
         .sort((a, b) => b.coverageScore - a.coverageScore)
@@ -192,6 +209,8 @@
     },
     {
       title: '评审效率排名',
+      accent: '#F7A832',
+      barGradient: 'linear-gradient(90deg, #FFC163 0%, #F7A832 100%)',
       rows: [...expertRows.value]
         .filter((e) => e.efficiencyScore > 0)
         .sort((a, b) => b.efficiencyScore - a.efficiencyScore)
@@ -330,3 +349,15 @@
   // keep-alive 页签再次进入时同步（历史页可能删除过记录）
   onActivated(refreshTable);
 </script>
+
+<style scoped>
+  .rank-badge {
+    transition:
+      background-color 0.2s,
+      color 0.2s;
+  }
+  .rank-badge:hover {
+    background: var(--accent, #3e8ef7);
+    color: #fff;
+  }
+</style>

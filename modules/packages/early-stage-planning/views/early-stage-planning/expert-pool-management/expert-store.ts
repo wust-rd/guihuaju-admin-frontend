@@ -9,6 +9,7 @@
  */
 
 import { defineStore } from 'pinia';
+import { dateUtil } from '@jeesite/core/utils/dateUtil';
 
 /** 专家实体（三个子模块共用：列表/表单/候补/考评） */
 export type Expert = {
@@ -67,39 +68,116 @@ export type EvaluationRecord = {
 };
 
 /** 专业领域选项（表单/搜索/抽取筛选共用） */
-export const EXPERT_FIELDS = ['城市规划', '建筑学', '市政工程', '交通规划', '环境科学', '园林景观'] as const;
+export const EXPERT_FIELDS = [
+  '城乡规划学',
+  '建筑学',
+  '土木工程',
+  '测绘科学与技术',
+  '交通运输工程',
+  '环境科学与工程',
+  '土木水利',
+  '风景园林',
+  '管理科学与工程',
+  '公共管理',
+  '工程管理',
+  '生态学',
+  '测绘工程',
+  '计算机科学与技术',
+  '软件工程',
+  '经济学',
+  '法学',
+] as const;
 
 /** 职称选项 */
 export const EXPERT_TITLES = ['高级工程师', '正高级工程师'] as const;
 
 /** 单位性质选项 */
-export const EXPERT_ORG_TYPES = ['民营企业', '国有企业', '政府机构', '事业单位'] as const;
+export const EXPERT_ORG_TYPES = ['民营企业', '国有企业', '党政机关', '事业单位', '其他'] as const;
 
-// ---- 假数据生成（20 条，李xx 系列对齐原型） ----
+// ---- 假数据生成（24 条，真实感中文姓名 + 武汉市规划/设计单位） ----
 
 const FIELDS = [...EXPERT_FIELDS];
 const TITLES = [...EXPERT_TITLES];
 const ORG_TYPES = [...EXPERT_ORG_TYPES];
-const ORGS = ['xxx设计有限公司', 'xxx设计研究院', 'xxx局', 'xxx咨询有限公司'];
-const GENDERS: Expert['gender'][] = ['男', '女'];
-const CAREER_TEXT = '长期从事城市规划与设计工作，主持多项省市级重点片区控规与城市设计项目，具有丰富的评审与咨询经验。';
+
+/** 真实感中文姓名池（互不相同，避免满屏同姓） */
+const EXPERT_NAMES = [
+  '张伟',
+  '王芳',
+  '李娜',
+  '刘洋',
+  '陈静',
+  '杨帆',
+  '赵磊',
+  '黄敏',
+  '周强',
+  '吴婷',
+  '徐鹏',
+  '孙丽',
+  '马超',
+  '朱琳',
+  '胡斌',
+  '郭雪',
+  '林峰',
+  '何洁',
+  '高翔',
+  '罗丹',
+  '郑凯',
+  '梁爽',
+  '谢军',
+  '宋佳',
+] as const;
+
+/** 单位池（武汉市规划/设计/高校） */
+const ORGS = [
+  '武汉市规划设计研究院',
+  '中南建筑设计院',
+  '湖北省城市规划设计研究院',
+  '华中科技大学建筑与城市规划学院',
+  '武汉大学城市设计学院',
+  '武汉市政工程设计研究院',
+  '中国城市规划设计研究院',
+  '武汉市园林建筑规划设计院',
+] as const;
+
+const GENDERS: Expert['gender'][] = ['男', '男', '女', '男', '女'];
+const AGES = [33, 36, 39, 42, 45, 48, 51];
+
+/** 履历池（按领域轮换，避免所有专家文案雷同） */
+const CAREERS = [
+  '长期从事城市总体规划与片区控制性详细规划编制，主持多项市重点片区城市设计，具备丰富评审经验。',
+  '深耕建筑设计二十余年，主持完成多栋超高层与大型公建项目，多次获省部级优秀设计奖。',
+  '专注市政道路与综合管廊设计，参与多项市级重大市政工程，熟悉全流程造价与进度管理。',
+  '从事交通规划与公共交通研究，牵头城市轨道线网与枢纽换乘方案，发表多篇核心期刊论文。',
+  '长期开展环境科学与海绵城市研究，主持多项水环境治理与生态修复项目，兼任高校客座专家。',
+  '主攻风景园林与滨水景观设计，主持多个城市公园与绿道系统规划，作品入选省级示范项目。',
+] as const;
+
+const REVIEWS = [
+  '多次担任市规委会专家评审、重点片区方案征集评审专家。',
+  '受聘市住建局专家库，参与年度优秀工程评选与验收评审。',
+  '长期参与省级规划成果评优及重大项目咨询论证。',
+  '担任多所高校研究生论文评审与答辩专家。',
+] as const;
 
 function createMockExperts(): Expert[] {
-  return Array.from({ length: 20 }, (_, i) => ({
+  return EXPERT_NAMES.map((name, i) => ({
     id: i + 1,
-    name: `李xx${i > 8 ? String(i + 1) : ''}`,
-    gender: GENDERS[i % 2],
-    age: [40, 35, 38][i % 3],
-    phone: '12345789511',
-    idCard: '420122xxxxxx3232',
+    name,
+    gender: GENDERS[i % GENDERS.length],
+    age: AGES[i % AGES.length] + (i % 3),
+    phone: `1${[38, 39, 50, 51, 86, 88][i % 6]}${String(10000000 + i * 173291).slice(0, 8)}`,
+    idCard: `4201xxxxxxxx${String(1000 + i * 37).slice(-4)}`,
     field: FIELDS[i % FIELDS.length],
     title: TITLES[i % 3 === 1 ? 1 : 0],
-    org: ORGS[i % ORGS.length],
-    orgType: ORG_TYPES[i % ORG_TYPES.length],
-    joinDate: '2026-10-12',
-    selected: i % 3 !== 2,
-    career: CAREER_TEXT,
-    reviewExperience: '多次担任市规委会专家评审、重点片区方案征集评审专家。',
+    org: ORGS[(i * 3) % ORGS.length],
+    orgType: ORG_TYPES[(i + 1) % ORG_TYPES.length],
+    joinDate: dateUtil()
+      .subtract(i * 7, 'day')
+      .format('YYYY-MM-DD'),
+    selected: false,
+    career: CAREERS[i % CAREERS.length],
+    reviewExperience: REVIEWS[i % REVIEWS.length],
   }));
 }
 
@@ -161,6 +239,11 @@ export const useExpertPoolStore = defineStore('expertPool', {
     removeExpert(id: number) {
       this.experts = this.experts.filter((e) => e.id !== id);
       this.evalRecords = this.evalRecords.filter((r) => r.expertId !== id);
+    },
+
+    /** 将指定专家标记为「已入选三师」（随机抽取确认选用后调用） */
+    markSelected(ids: number[]) {
+      this.experts = this.experts.map((e) => (ids.includes(e.id) ? { ...e, selected: true } : e));
     },
 
     /** 按条件查询专家（name/org 模糊、selected 精确 'yes'/'no'） */

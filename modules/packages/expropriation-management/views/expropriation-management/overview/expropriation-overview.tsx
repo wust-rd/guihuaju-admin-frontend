@@ -1,7 +1,7 @@
 import { cn } from '@jeesite/core/libs';
 import { useECharts } from '@jeesite/core/hooks/web/useECharts';
-import { GlowButton } from '@jeesite/display/components/glow-button';
 import { StatCard } from '@jeesite/display/components/stat-card';
+import { GlowButton } from '@jeesite/display/components/glow-button';
 import type { Ref } from 'vue';
 import { defineComponent, onMounted, ref, shallowRef } from 'vue';
 
@@ -361,9 +361,9 @@ export const ExpropriationOverview = defineComponent({
                     <div class="w-3px h-54px bg-[#00E5FF] rd-full" />
 
                     <div class="ml-16px">
-                      <div class="text-20px font-500 text-white/90">{d.household}户</div>
+                      <div class="text-20px font-500 text-white/90">{d.fund}亿</div>
 
-                      <div class="mt-4px text-12px text-white/55">完成户数</div>
+                      <div class="mt-4px text-12px text-white/55">落实资金</div>
                     </div>
 
                     <div
@@ -374,7 +374,7 @@ export const ExpropriationOverview = defineComponent({
                         background: 'rgba(245,227,52,0.08)',
                       }}
                     >
-                      {d.householdRate}%
+                      {d.fundRate}%
                     </div>
                   </div>
                 </div>
