@@ -1,4 +1,4 @@
-import { Header } from '@jeesite/display/components/header';
+import { Header } from '@jeesite/core/layouts/default/header/new-header';
 import { Sidebar } from '@jeesite/display/components/sidebar';
 import { defineComponent, onMounted, onUnmounted } from 'vue';
 import { RouterView, useRouter } from 'vue-router';
@@ -36,8 +36,8 @@ export default defineComponent({
     });
 
     return () => (
-      <div class="flex h-screen flex-col overflow-hidden">
-        {/* 顶部导航：sticky 占文档流 88px，滚动时粘在顶部 */}
+      <div class="flex h-screen flex-col overflow-hidden pt-88px">
+        {/* 顶部导航：fixed 脱离文档流（见 new-header），外层容器以 pt-88px 让出头部高度 */}
         <Header />
 
         {/* 内容区：flex-1 占满剩余高度（min-h-0 允许压缩，否则被内容最小高度撑破） */}

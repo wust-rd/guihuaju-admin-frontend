@@ -9,10 +9,9 @@ import { GlowTitle2 } from '@jeesite/display/components/glow-title/title2';
 import { DisplayPageLayout } from '@jeesite/display/components/page-layout';
 import { RegionTabs } from '@jeesite/display/components/region-tabs';
 import type { MenuItemType } from 'antdv-next';
-import { defineComponent, onBeforeUnmount, ref } from 'vue';
+import { defineComponent, ref } from 'vue';
 import { DistrictChart } from './district-chart';
 import { InvestTotalCard } from './invest-total-card';
-import { useAppStore } from '@jeesite/core/store/modules/app';
 import { VMap, VMapControls, tiandituStyle, tiandituMapOptions } from '@jeesite/vmap';
 
 // 区域 tabs：激活项由 RegionTabs 的 svg 发光胶囊指示器表达（按钮本身不再发光）
@@ -24,13 +23,7 @@ const regionTabs: GlowTabItem[] = [
 export default defineComponent({
   name: 'DisplayEarlyStagePlanning',
   setup() {
-    const appStore = useAppStore();
-    // 沉浸式全屏：进入时隐藏顶部标签栏、去掉内容区 padding，让页面占据整个屏幕（保留侧边菜单）
-    appStore.setImmersive(true);
-    // 离开时恢复，避免影响其它页面
-    onBeforeUnmount(() => {
-      appStore.setImmersive(false);
-    });
+    // 沉浸式全屏由布局按路由自动判定（new-header 的 isDisplayRoute），页面无需拨开关
 
     // 区域 tabs 当前激活项（点击切换，单选）
     const activeRegionKey = ref<string>('district');

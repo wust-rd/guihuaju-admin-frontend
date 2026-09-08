@@ -1,4 +1,5 @@
 import { computed, defineComponent, unref, type CSSProperties } from 'vue';
+import { useRoute } from 'vue-router';
 
 import LayoutHeader from './index.vue';
 import MultipleTabs from '../tabs/index.vue';
@@ -10,7 +11,7 @@ import { useMultipleTabSetting } from '@jeesite/core/hooks/setting/useMultipleTa
 import { useAppInject } from '@jeesite/core/hooks/web/useAppInject';
 import { useLayoutHeight } from '../content/useContentViewHeight';
 import { useMultipleTabStore } from '@jeesite/core/store/modules/multipleTab';
-import { useAppStore } from '@jeesite/core/store/modules/app';
+import { isDisplayRoute } from './nav-links';
 
 import './new-multiple-header.less';
 
@@ -23,11 +24,16 @@ const TABS_HEIGHT_LARGE = 37;
  * NewMultipleHeader —— 多页签头部（沉浸式全屏版），供 new-layout.tsx 使用，
  * 不改动原始 header/MultipleHeader.vue。
  *
- * 差异：当全局 store 的 immersive 为 true 时，隐藏顶部标签栏（tabs），用于大屏/看板页面。
+ * 差异：当前路由为沉浸式大屏路由（isDisplayRoute，按顶栏导航 to 前缀匹配）时，
+ * 隐藏顶部标签栏（tabs），用于大屏/看板页面。
  */
 export default defineComponent({
   name: 'NewMultipleHeader',
   setup() {
+    const route = useRoute();
+    // 沉浸式改为按当前路由声明式判定（首帧即生效，无需页面拨开关，见 nav-links 的 isDisplayRoute）
+    const immersive = computed(() => isDisplayRoute(route.path));
+
     const { setHeaderHeight } = useLayoutHeight();
 
     const { getCalcContentWidth, getSplit } = useMenuSetting();
@@ -38,10 +44,9 @@ export default defineComponent({
 
     const { getShowMultipleTab, getTabsStyle } = useMultipleTabSetting();
     const tabStore = useMultipleTabStore();
-    const appStore = useAppStore();
 
     const getShowTabs = computed(() => {
-      return unref(getShowMultipleTab) && !unref(getFullContent) && !unref(appStore.getImmersive);
+      return unref(getShowMultipleTab) && !unref(getFullContent) && !unref(immersive);
     });
 
     const getShowTabs2 = computed(() => {
@@ -72,7 +77,7 @@ export default defineComponent({
       if ((unref(getShowFullHeaderRef) || !unref(getSplit)) && unref(getShowHeader) && !unref(getFullContent)) {
         height += HEADER_HEIGHT;
       }
-      if (unref(getShowMultipleTab) && !unref(getFullContent) && !unref(appStore.getImmersive) && unref(getShowTabs2)) {
+      if (unref(getShowMultipleTab) && !unref(getFullContent) && !unref(immersive) && unref(getShowTabs2)) {
         if (['3', '4', '5'].includes(unref(getTabsStyle))) {
           height += TABS_HEIGHT_LARGE;
         } else {

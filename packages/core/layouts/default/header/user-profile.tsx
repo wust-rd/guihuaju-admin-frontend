@@ -1,5 +1,5 @@
 import { defineComponent } from 'vue';
-import { UserDropDown } from './actions';
+import { UserDropDown } from './user-dropdown';
 
 /**
  * UserProfile —— display header 右侧功能坞（精简后）

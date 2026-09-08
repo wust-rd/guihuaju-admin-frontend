@@ -27,7 +27,6 @@ import {
 } from '@jeesite/urban-protection/api/urban-protection/city-scope';
 import { RelicCard } from './relic-card';
 import { ScopeCard, type SelectedCityScope } from './scope-card';
-import { useAppStore } from '@jeesite/core/store/modules/app';
 import { DisplayPageLayout } from '@jeesite/display/components/page-layout';
 import { UrbanProtectionDistrictBar } from './district-bar';
 import { UrbanProtectionTrendLine } from './trend-line';
@@ -206,13 +205,7 @@ export default defineComponent({
   name: 'ViewsUrbanProtectionRelicMap',
 
   setup() {
-    const appStore = useAppStore();
-    // 沉浸式全屏：进入时隐藏顶部标签栏、去掉内容区 padding，让页面占据整个屏幕（保留侧边菜单）
-    appStore.setImmersive(true);
-    // 离开时恢复，避免影响其它页面
-    onBeforeUnmount(() => {
-      appStore.setImmersive(false);
-    });
+    // 沉浸式全屏由布局按路由自动判定（new-header 的 isDisplayRoute），页面无需拨开关
 
     /** 文物清单（本地 JSON 加载，接入接口后替换 loadRelics 即可） */
     const relics = shallowRef<Relic[]>([]);

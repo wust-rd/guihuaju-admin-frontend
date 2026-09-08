@@ -1,6 +1,5 @@
-import { defineComponent, onBeforeUnmount, ref } from 'vue';
+import { defineComponent, ref } from 'vue';
 import type { MenuItemType } from 'antdv-next';
-import { useAppStore } from '@jeesite/core/store/modules/app';
 import { buildYearItems } from '@jeesite/core/libs';
 import { CornerItem, CornerPanelRow } from '@jeesite/display/components/corner-panel';
 import { CollapseGroups } from '@jeesite/display/components/collapse-groups';
@@ -61,13 +60,7 @@ const regionTabs: GlowTabItem[] = [
 export default defineComponent({
   name: 'ViewsUrbanHealthCheckOverview',
   setup() {
-    const appStore = useAppStore();
-    // 沉浸式全屏：进入时隐藏顶部标签栏、去掉内容区 padding，让页面占据整个屏幕（保留侧边菜单）
-    appStore.setImmersive(true);
-    // 离开时恢复，避免影响其它页面
-    onBeforeUnmount(() => {
-      appStore.setImmersive(false);
-    });
+    // 沉浸式全屏由布局按路由自动判定（new-header 的 isDisplayRoute），页面无需拨开关
 
     // 指标分类下拉菜单项
     const items: MenuItemType[] = [

@@ -19,7 +19,6 @@ import { RatingResult } from './rating-result';
 import { PolygonCard } from './polygon-card';
 import type { SelectedPolygon } from './polygon-types';
 import { ProjectProgress } from '@jeesite/display/components/ifco/project-progress';
-import { useAppStore } from '@jeesite/core/store/modules/app';
 
 /** OSS 图片基础地址 */
 const OSS_BASE = 'https://zhugengju-public.oss-cn-wuhan-lr.aliyuncs.com/片区策划';
@@ -30,13 +29,7 @@ const PIANQU_IMG = `${OSS_BASE}/片区概况.webp`;
 export default defineComponent({
   name: 'DisplayIfco',
   setup() {
-    const appStore = useAppStore();
-    // 沉浸式全屏：进入时隐藏顶部标签栏、去掉内容区 padding，让页面占据整个屏幕（保留侧边菜单）
-    appStore.setImmersive(true);
-    // 离开时恢复，避免影响其它页面
-    onBeforeUnmount(() => {
-      appStore.setImmersive(false);
-    });
+    // 沉浸式全屏由布局按路由自动判定（new-header 的 isDisplayRoute），页面无需拨开关
 
     /** 右侧抽屉（知音地块点击打开） */
     const drawerVisible = ref(false);
