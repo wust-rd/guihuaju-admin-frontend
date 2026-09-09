@@ -28,6 +28,7 @@
 | `@jeesite/app` | `packages/app/` | 应用级扩展页面（appComment 应用评论 / appUpgrade 应用升级） | — |
 | `@jeesite/display` | `packages/display/` | 演示应用（/display 独立 layout，main.ts 中 setupDisplay 注册） | — |
 | `@jeesite/vmap` | `packages/vmap/` | MapLibre 地图组件封装（useMap / useMapLayer，见 §10） | — |
+| `@jeesite/ui` | `packages/ui/` | 通用自绘 UI 组件（antdv 样式定制受限时使用；Stepper=shadcn-vue stepper 定制移植） | — |
 | `@jeesite/urban-health-check` | `modules/packages/urban-health-check/` | 城市体检业务模块（overview / urban，本项目业务） | — |
 | `@jeesite/vite` | `packages/vite/` | Vite 工具链（插件/主题/构建配置） | — |
 | `@jeesite/types` | `packages/types/` | 全局 TypeScript 类型声明 | — |

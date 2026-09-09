@@ -56,6 +56,7 @@
 | `packages/cms/views/cms/article/` | [README](packages/cms/views/cms/article/README.md) | CollapseForm 分区表单范例 |
 | `packages/dfm/views/dfm/designer/` | [README](packages/dfm/views/dfm/designer/README.md) | 动态表单设计器入口 |
 | `packages/vmap/` | [README](packages/vmap/README.md) | MapLibre 地图组件：useMap 注入约束、useMapLayer 图层生命周期 |
+| `packages/ui/` | [README](packages/ui/README.md) | 通用自绘 UI 组件包：Stepper（shadcn-vue stepper 定制移植，状态驱动） |
 
 ## 4. 文档同步规则
 
