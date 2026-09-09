@@ -107,12 +107,6 @@
       rules: [{ required: true, message: '请选择单位性质' }],
     },
     {
-      label: '入库时间',
-      field: 'joinDate',
-      component: 'DatePicker',
-      componentProps: { valueFormat: 'YYYY-MM-DD', style: 'width: 100%' },
-    },
-    {
       label: '是否已入选三师',
       field: 'selected',
       component: 'Select',
@@ -167,7 +161,6 @@
         title: record.value.title ?? undefined,
         org: record.value.org ?? '',
         orgType: record.value.orgType ?? undefined,
-        joinDate: record.value.joinDate ?? '',
         selected: record.value.selected ?? undefined,
         career: record.value.career ?? '',
         reviewExperience: record.value.reviewExperience ?? '',

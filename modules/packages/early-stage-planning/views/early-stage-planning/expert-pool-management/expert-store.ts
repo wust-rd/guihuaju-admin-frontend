@@ -224,10 +224,13 @@ export const useExpertPoolStore = defineStore('expertPool', {
       return Math.round(stars * 2 * 10) / 10;
     },
 
-    /** 新增专家（插到最前；TODO: 后端就绪后改为接口提交） */
+    /** 新增专家（插到最前；入库时间由系统在新增时自动生成为当天，不可手动修改；TODO: 后端就绪后改为接口提交） */
     addExpert(data: Partial<Expert>) {
       const id = this.experts.reduce((max, e) => Math.max(max, e.id), 0) + 1;
-      this.experts = [{ ...createDefaultExpert(), ...data, id }, ...this.experts];
+      this.experts = [
+        { ...createDefaultExpert(), ...data, id, joinDate: dateUtil().format('YYYY-MM-DD') },
+        ...this.experts,
+      ];
     },
 
     /** 修改专家（原地合并；TODO: 后端就绪后改为接口提交） */
