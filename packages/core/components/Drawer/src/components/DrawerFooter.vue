@@ -69,6 +69,7 @@
 
 <style lang="less">
   .jeesite-basic-drawer-footer {
+    border-top: 1px solid #bfbfbf;
     position: absolute;
     bottom: 0;
     width: 100%;

@@ -303,6 +303,8 @@
 </script>
 <style lang="less">
   .jeesite.ant-form.jeesite-basic-form {
+    padding-bottom: 60px;
+
     .ant-form-item {
       margin-bottom: 20px;
 
