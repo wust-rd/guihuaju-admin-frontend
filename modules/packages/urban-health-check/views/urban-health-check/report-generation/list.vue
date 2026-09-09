@@ -98,7 +98,7 @@
     REPORT_TYPES,
   } from '@jeesite/urban-health-check/api/urban-health-check/report-generation';
   import {
-    ADMIN_DIVISIONS,
+    DISTRICTS,
     SURVEY_AREAS,
     toOptions,
   } from '@jeesite/urban-health-check/api/urban-health-check/common';
@@ -114,7 +114,7 @@
   /** 报告类型下拉选项 */
   const typeOptions = toOptions(REPORT_TYPES);
   /** 体检对象下拉选项:全市 + 各行政区 */
-  const targetOptions = [{ label: '武汉市', value: '武汉市' }, ...toOptions(ADMIN_DIVISIONS)];
+  const targetOptions = [{ label: '武汉市', value: '武汉市' }, ...toOptions(DISTRICTS)];
   /** 片区选择下拉选项(体检片区/街道) */
   const areaOptions = toOptions(SURVEY_AREAS);
   /** 章节设置下拉选项(tags 模式下可另手动输入自定义章节) */

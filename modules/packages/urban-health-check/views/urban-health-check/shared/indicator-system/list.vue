@@ -68,7 +68,7 @@
   } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator-system';
   import InputForm from './form.vue';
   import {
-    ADMIN_DIVISIONS,
+    DISTRICTS,
     FUNCTION_POSITIONS,
     SURVEY_AREAS,
     toOptions,
@@ -111,7 +111,7 @@
               label: '行政区划',
               field: 'adminDivision',
               component: 'Select' as const,
-              componentProps: { options: toOptions(ADMIN_DIVISIONS), allowClear: true },
+              componentProps: { options: toOptions(DISTRICTS), allowClear: true },
             },
             {
               label: '功能定位',

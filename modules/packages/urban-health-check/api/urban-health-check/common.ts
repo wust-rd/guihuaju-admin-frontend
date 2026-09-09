@@ -7,7 +7,7 @@
  */
 
 /** 行政区划(武汉市行政区名) */
-export const ADMIN_DIVISIONS = [
+export const DISTRICTS = [
   '江岸区',
   '江汉区',
   '硚口区',

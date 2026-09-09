@@ -31,7 +31,7 @@
   import { BasicDrawer, useDrawerInner } from '@jeesite/core/components/Drawer';
   import type { DistrictAchievement } from '@jeesite/urban-health-check/api/urban-health-check/district/achievement';
   import {
-    ADMIN_DIVISIONS,
+    DISTRICTS,
     FUNCTION_POSITIONS,
     SURVEY_AREAS,
     toOptions,
@@ -92,7 +92,7 @@
       label: '行政区划',
       field: 'adminDivision',
       component: 'Select' as const,
-      componentProps: { options: toOptions(ADMIN_DIVISIONS), allowClear: true },
+      componentProps: { options: toOptions(DISTRICTS), allowClear: true },
     },
     {
       label: '功能定位',

@@ -18,7 +18,7 @@
 <script lang="ts" setup name="UhcSharedIndicatorResultForm">
   import { computed, ref, unref } from 'vue';
   import {
-    ADMIN_DIVISIONS,
+    DISTRICTS,
     FUNCTION_POSITIONS,
     SURVEY_AREAS,
     toOptions,
@@ -75,7 +75,7 @@
             label: '行政区划',
             field: 'adminDivision',
             component: 'Select' as const,
-            componentProps: { options: toOptions(ADMIN_DIVISIONS), allowClear: true },
+            componentProps: { options: toOptions(DISTRICTS), allowClear: true },
           },
           {
             label: '功能定位',
