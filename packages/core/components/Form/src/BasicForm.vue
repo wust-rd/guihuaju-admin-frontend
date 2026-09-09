@@ -363,6 +363,17 @@
       background: rgb(0 0 0 / 2%) !important;
     }
 
+    // 数字输入内层 input、日期选择（antdv-next 自带禁用灰），染回与上面一致的禁用美化色
+    .ant-input-number-disabled .ant-input-number-input,
+    .ant-picker-disabled .ant-picker-input > input {
+      color: fade(@text-color-base, 75) !important;
+    }
+
+    .ant-picker-disabled {
+      color: fade(@text-color-base, 75) !important;
+      background: rgb(0 0 0 / 2%) !important;
+    }
+
     &--compact {
       .ant-form-item {
         margin-bottom: 7px !important;
