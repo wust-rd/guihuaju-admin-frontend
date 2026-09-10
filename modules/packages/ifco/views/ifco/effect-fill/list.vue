@@ -12,7 +12,7 @@
     effectFillStore，与进展域互不影响。
 
   其余约定（列级编辑/新增项目 Modal+自动滚右/带入锁删/空值置空/奇偶淡青列/
-  只固定指标名称列+表头 sticky/Excel 导出）与进展填报一致，见 progress-fill/list.vue 头注释。
+  表格区域内滚动 scroll.y+固定指标名称列/Excel 导出）与进展填报一致，见 progress-fill/list.vue 头注释。
 
   菜单注册(菜单名称「项目成效填报」):
    - 链接地址:/ifco/effect-fill/list
@@ -54,9 +54,9 @@
         <Table
           :columns="tableColumns"
           :data-source="FILL_ROWS"
-          :scroll="{ x: scrollX }"
+          :scroll="{ x: scrollX, y: TABLE_HEIGHT }"
+          :components="TABLE_COMPONENTS"
           :pagination="false"
-          sticky
           bordered
           size="small"
           row-key="key"
@@ -105,6 +105,7 @@
     getEffectUnitData,
     rowTotal,
   } from '@jeesite/ifco/api/ifco/effect-fill';
+  import ResizableTitle from '@jeesite/core/components/Table/src/components/ResizableTitle.vue';
   import { exportEffectExcel } from './export-excel';
 
   /** 表格行(指标) */
@@ -117,6 +118,20 @@
   };
 
   const { showMessage } = useMessage();
+
+  // ── 列宽拖拽(复用框架 ResizableTitle,同 sys/empUser):onHeaderCell 注入 resizable 与宽度回写 ──
+  const TABLE_COMPONENTS = { header: { cell: ResizableTitle } };
+  const colWidths = reactive<Record<string, number>>({});
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const resizableHeaderCell = (col: any): any => ({
+    column: { ...col, resizable: true },
+    onResize: (_event: MouseEvent, { size }: { size: { width: number } }) => {
+      if (col.key) {
+        colWidths[col.key] = size.width;
+      }
+    },
+  });
+  const widthFor = (key: string, defaultWidth: number) => colWidths[key] ?? defaultWidth;
 
   // ── 填报周期:年份 + 季度(默认当前) ──────────────────────────────────
   const yearOptions = (buildYearItems(3) as { key: string; label: string }[]).map((item) => ({
@@ -309,10 +324,12 @@
       const value = col.values[item.key];
       if (item.dual) {
         const tuple: [number, number] = Array.isArray(value) ? value : [0, 0];
+        // 双值行的两个输入框等分:InputNumber 自身宽度样式会压过普通工具类,
+        // UnoCSS 加 ! 前缀 = important,压过组件默认样式后 flex 等分才生效
         const dualInput = (slot: 0 | 1, placeholder: string) =>
           h(InputNumber, {
             size: 'small',
-            class: 'w-0 flex-1',
+            class: '!flex-1 !min-w-0',
             value: tuple[slot] || undefined,
             min: 0,
             controls: false,
@@ -374,8 +391,9 @@
     const projectColumns: TableColumnsType<FillRow> = projects.map((col, index) => ({
       key: col.key,
       title: renderProjectHeader(col),
-      width: 140,
+      width: widthFor(col.key, 140),
       align: 'right',
+      onHeaderCell: resizableHeaderCell,
       // 奇偶列底色提升横向辨识度;编辑列高亮仍优先生效
       className:
         [
@@ -392,29 +410,33 @@
         key: 'name',
         title: '指标名称',
         dataIndex: 'name',
-        width: 400,
+        width: widthFor('name', 400),
         fixed: 'left',
         className: 'effect-fill-col-name',
+        onHeaderCell: resizableHeaderCell,
       },
       {
         key: 'unit',
         title: '计量单位',
         dataIndex: 'unit',
-        width: 90,
+        width: widthFor('unit', 90),
         align: 'center',
+        onHeaderCell: resizableHeaderCell,
       },
       {
         key: 'code',
         title: '代码',
         dataIndex: 'code',
-        width: 80,
+        width: widthFor('code', 80),
         align: 'center',
+        onHeaderCell: resizableHeaderCell,
       },
       {
         key: 'total',
         title: '合计',
-        width: 140,
+        width: widthFor('total', 140),
         align: 'right',
+        onHeaderCell: resizableHeaderCell,
         onCell: sumRowOnCell,
         render: (_value: unknown, record: FillRow) =>
           renderDisplay(rowTotal(EFFECT_INDICATOR_MAP[record.key]!, unitData.value)),
@@ -423,9 +445,19 @@
     ];
   });
 
+  /** 表格区域高度:视口自适应,表格内部纵向滚动(不依赖页面滚动,表头恒在视野) */
+  const TABLE_HEIGHT = 'calc(100vh - 400px)';
+
+  // 横向滚动宽度 = 各列当前宽度(含拖拽调整)之和
   const scrollX = computed(() => {
-    const count = unitData.value?.projects.length ?? 0;
-    return 400 + 90 + 80 + 120 + 180 * count;
+    const projects = unitData.value?.projects ?? [];
+    return (
+      widthFor('name', 400) +
+      widthFor('unit', 90) +
+      widthFor('code', 80) +
+      widthFor('total', 140) +
+      projects.reduce((sum, col) => sum + widthFor(col.key, 140), 0)
+    );
   });
 </script>
 

@@ -43,9 +43,9 @@
       <Table
         :columns="tableColumns"
         :data-source="STAT_ROWS"
-        :scroll="{ x: scrollX }"
+        :scroll="{ x: scrollX, y: TABLE_HEIGHT }"
+        :components="TABLE_COMPONENTS"
         :pagination="false"
-        sticky
         bordered
         size="small"
         row-key="key"
@@ -54,9 +54,10 @@
   </PageWrapper>
 </template>
 <script lang="ts" setup name="ViewsIfcoProgressStatisticsList">
-  import { computed, ref } from 'vue';
+  import { computed, reactive, ref } from 'vue';
   import { Card, RadioGroup, Select, Table } from 'antdv-next';
   import type { TableColumnsType } from 'antdv-next';
+  import ResizableTitle from '@jeesite/core/components/Table/src/components/ResizableTitle.vue';
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
   import { PageWrapper } from '@jeesite/core/components/Page';
   import { dateUtil } from '@jeesite/core/utils/dateUtil';
@@ -86,6 +87,22 @@
   };
 
   const { showMessage } = useMessage();
+
+  // ── 列宽拖拽(复用框架 ResizableTitle,同 sys/empUser):onHeaderCell 注入 resizable 与宽度回写 ──
+  const TABLE_COMPONENTS = { header: { cell: ResizableTitle } };
+  const colWidths = reactive<Record<string, number>>({});
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const resizableHeaderCell = (col: any): any => ({
+    column: { ...col, resizable: true },
+    onResize: (_event: MouseEvent, { size }: { size: { width: number } }) => {
+      if (col.key) {
+        colWidths[col.key] = size.width;
+      }
+    },
+  });
+  const widthFor = (key: string, defaultWidth: number) => colWidths[key] ?? defaultWidth;
+
+
 
   // ── 筛选条件:年份 + 季度(切换即时生效) ──────────────────────────────
   const yearOptions = (buildYearItems(3) as { key: string; label: string }[]).map((item) => ({
@@ -141,23 +158,26 @@
         key: 'name',
         title: '指标名称',
         dataIndex: 'name',
-        width: 400,
+        width: widthFor('name', 400),
         fixed: 'left',
         className: 'progress-stat-col-name',
+        onHeaderCell: resizableHeaderCell,
       },
       {
         key: 'unit',
         title: '计量单位',
         dataIndex: 'unit',
-        width: 90,
+        width: widthFor('unit', 90),
         align: 'center',
+        onHeaderCell: resizableHeaderCell,
       },
       {
         key: 'code',
         title: '代码',
         dataIndex: 'code',
-        width: 80,
+        width: widthFor('code', 80),
         align: 'center',
+        onHeaderCell: resizableHeaderCell,
       },
     ];
   }
@@ -168,8 +188,9 @@
     const leafColumn = (leaf: CategoryDef): TableColumnsType<StatRow>[number] => ({
       key: leaf.key,
       title: leaf.label,
-      width: 150,
+      width: widthFor(leaf.key, 150),
       align: 'right',
+      onHeaderCell: resizableHeaderCell,
       onCell: sumRowOnCell,
       render: (_value: unknown, record: StatRow) =>
         renderDisplay(tabTotalOfUnits(INDICATOR_MAP[record.key], units, leaf.key)),
@@ -189,8 +210,9 @@
       {
         key: 'grand',
         title: '总计',
-        width: 130,
+        width: widthFor('grand', 130),
         align: 'right',
+        onHeaderCell: resizableHeaderCell,
         onCell: sumRowOnCell,
         render: (_value: unknown, record: StatRow) =>
           renderDisplay(grandTotalOfUnits(INDICATOR_MAP[record.key], units)),
@@ -199,7 +221,18 @@
     ];
   });
 
-  const scrollX = computed(() => 400 + 90 + 80 + 130 + 150 * LEAF_CATEGORIES.length);
+  /** 表格区域高度:视口自适应,表格内部纵向滚动(不依赖页面滚动,表头恒在视野) */
+  const TABLE_HEIGHT = 'calc(100vh - 500px)';
+
+  // 横向滚动宽度 = 各列当前宽度(含拖拽调整)之和
+  const scrollX = computed(
+    () =>
+      widthFor('name', 400) +
+      widthFor('unit', 90) +
+      widthFor('code', 80) +
+      widthFor('grand', 130) +
+      LEAF_CATEGORIES.reduce((sum, leaf) => sum + widthFor(leaf.key, 150), 0),
+  );
 
   // ── 导出(按钮保留,功能待做) ─────────────────────────────────────────
   function handleExport() {

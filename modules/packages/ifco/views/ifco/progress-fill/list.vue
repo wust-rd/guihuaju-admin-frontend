@@ -77,9 +77,9 @@
         <Table
           :columns="tableColumns"
           :data-source="FILL_ROWS"
-          :scroll="{ x: scrollX }"
+          :scroll="{ x: scrollX, y: TABLE_HEIGHT }"
+          :components="TABLE_COMPONENTS"
           :pagination="false"
-          sticky
           bordered
           size="small"
           row-key="key"
@@ -146,6 +146,7 @@
     tabTotal,
     toPeriodKey,
   } from '@jeesite/ifco/api/ifco/progress-fill';
+  import ResizableTitle from '@jeesite/core/components/Table/src/components/ResizableTitle.vue';
   import { exportProgressFillExcel } from './export-excel';
 
   /** 表格行(指标) */
@@ -158,6 +159,21 @@
   };
 
   const { showMessage } = useMessage();
+
+  // ── 列宽拖拽(复用框架 ResizableTitle,同 sys/empUser):onHeaderCell 注入 resizable 与宽度回写 ──
+  const TABLE_COMPONENTS = { header: { cell: ResizableTitle } };
+  const colWidths = reactive<Record<string, number>>({});
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const resizableHeaderCell = (col: any): any => ({
+    column: { ...col, resizable: true },
+    onResize: (_event: MouseEvent, { size }: { size: { width: number } }) => {
+      if (col.key) {
+        colWidths[col.key] = size.width;
+      }
+    },
+  });
+  const widthFor = (key: string, defaultWidth: number) => colWidths[key] ?? defaultWidth;
+
 
   // ── 填报周期:年份 + 季度(默认当前) ──────────────────────────────────
   const yearOptions = (buildYearItems(3) as { key: string; label: string }[]).map((item) => ({
@@ -388,9 +404,7 @@
   }
 
   // ── 带入上一季度(当前单位;连同数值;二三四带入列不可删,一季度可删) ─────
-  const broughtKey = computed(
-    () => `${toPeriodKey(year.value, quarter.value)}|${reportUnit.value ?? ''}`,
-  );
+  const broughtKey = computed(() => `${toPeriodKey(year.value, quarter.value)}|${reportUnit.value ?? ''}`);
   const broughtIn = computed(() => broughtMap[broughtKey.value] === true);
   const bringInTooltip = computed(() =>
     quarter.value === '1'
@@ -475,24 +489,27 @@
         key: 'name',
         title: '指标名称',
         dataIndex: 'name',
-        width: 400,
+        width: widthFor('name', 400),
         fixed: 'left',
         className: 'progress-fill-col-name',
+        onHeaderCell: resizableHeaderCell,
         render: (value: string, record: FillRow) => renderNameCell(value, record),
       },
       {
         key: 'unit',
         title: '计量单位',
         dataIndex: 'unit',
-        width: 90,
+        width: widthFor('unit', 90),
         align: 'center',
+        onHeaderCell: resizableHeaderCell,
       },
       {
         key: 'code',
         title: '代码',
         dataIndex: 'code',
-        width: 80,
+        width: widthFor('code', 80),
         align: 'center',
+        onHeaderCell: resizableHeaderCell,
       },
     ];
   }
@@ -505,8 +522,9 @@
     const projectColumns: TableColumnsType<FillRow> = projects.map((col, index) => ({
       key: col.key,
       title: renderProjectHeader(col),
-      width: 140,
+      width: widthFor(col.key, 140),
       align: 'right',
+      onHeaderCell: resizableHeaderCell,
       // 奇偶列底色提升横向辨识度;编辑列高亮仍优先生效
       className:
         [
@@ -524,8 +542,9 @@
       {
         key: 'total',
         title: '合计',
-        width: 120,
+        width: widthFor('total', 120),
         align: 'right',
+        onHeaderCell: resizableHeaderCell,
         onCell: sumRowOnCell,
         render: (_value: unknown, record: FillRow) => renderDisplay(tabTotal(INDICATOR_MAP[record.key], tab)),
       },
@@ -539,10 +558,12 @@
     const leafColumn = (leaf: CategoryDef): TableColumnsType<FillRow>[number] => ({
       key: leaf.key,
       title: leaf.label,
-      width: 150,
+      width: widthFor(leaf.key, 150),
       align: 'right',
+      onHeaderCell: resizableHeaderCell,
       onCell: sumRowOnCell,
-      render: (_value: unknown, record: FillRow) => renderDisplay(tabTotal(INDICATOR_MAP[record.key], data?.[leaf.key])),
+      render: (_value: unknown, record: FillRow) =>
+        renderDisplay(tabTotal(INDICATOR_MAP[record.key], data?.[leaf.key])),
     });
     /** 嵌套类目拆为三个二级子列(一级表头跨列),简单类目单列 */
     const categoryColumns: TableColumnsType<FillRow> = DATA_CATEGORIES.map((cat) =>
@@ -559,8 +580,9 @@
       {
         key: 'grand',
         title: '总计',
-        width: 130,
+        width: widthFor('grand', 130),
         align: 'right',
+        onHeaderCell: resizableHeaderCell,
         onCell: sumRowOnCell,
         render: (_value: unknown, record: FillRow) => renderDisplay(grandTotal(INDICATOR_MAP[record.key], data)),
       },
@@ -572,14 +594,21 @@
     isOverview.value ? buildOverviewColumns() : buildFillColumns(),
   );
 
+  /** 表格区域高度:视口自适应,表格内部纵向滚动(不依赖页面滚动,表头恒在视野) */
+  const TABLE_HEIGHT = 'calc(100vh - 500px)';
+
+  // 横向滚动宽度 = 各列当前宽度(含拖拽调整)之和
   const scrollX = computed(() => {
-    const fixedWidth = 400 + 90 + 80;
+    const fixedWidth = widthFor('name', 400) + widthFor('unit', 90) + widthFor('code', 80);
     if (isOverview.value) {
-      // 叶子类目列数(嵌套类目拆三列) + 总计
-      return fixedWidth + 130 + 150 * LEAF_CATEGORIES.length;
+      return (
+        fixedWidth +
+        widthFor('grand', 130) +
+        LEAF_CATEGORIES.reduce((sum, leaf) => sum + widthFor(leaf.key, 150), 0)
+      );
     }
-    const count = activeLeaf.value ? (periodData.value?.[activeLeaf.value.key]?.projects.length ?? 0) : 0;
-    return fixedWidth + 120 + 140 * count;
+    const projects = activeLeaf.value ? (periodData.value?.[activeLeaf.value.key]?.projects ?? []) : [];
+    return fixedWidth + widthFor('total', 120) + projects.reduce((sum, col) => sum + widthFor(col.key, 140), 0);
   });
 </script>
 
