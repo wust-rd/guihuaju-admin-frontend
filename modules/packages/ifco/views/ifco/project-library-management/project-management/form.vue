@@ -68,7 +68,7 @@
         <BasicForm @register="handleReviewFormRegister">
           <!-- 立项审批或核准备案文件：提示行 + 图标按钮上传（多文件不限量，before-upload 拦截，假数据阶段） -->
           <template #projectApprovalOrFilingFileList>
-            <div class="text-14px text-black mb-1">政府投资项目上传立项审批文件，企业投资项目请上传核准或备案文件</div>
+            <div class="text-14px text-black mb-4">政府投资项目上传立项审批文件，企业投资项目请上传核准或备案文件</div>
             <Upload
               v-if="!isView"
               v-model:file-list="approvalOrFilingFileList"
@@ -91,6 +91,8 @@
               </div>
               <div v-if="!approvalOrFilingFileList.length" class="text-14px text-gray-400">未上传文件</div>
             </div>
+            <!-- 联合审查机构审查：机构切换（空间恒定） -->
+            <ReviewBlock v-model:entries="reviewMap.approvalOrFiling" :org-list="reviewOrgList" :disabled="isView" />
           </template>
           <!-- 国土空间规划符合情况：上传（多文件不限量，与立项审批同款交互） -->
           <template #territorialSpacePlanFileList>
@@ -115,6 +117,12 @@
               </div>
               <div v-if="!territorialSpacePlanFileList.length" class="text-14px text-gray-400">未上传文件</div>
             </div>
+            <!-- 联合审查机构审查：机构切换（空间恒定） -->
+            <ReviewBlock
+              v-model:entries="reviewMap.territorialSpacePlan"
+              :org-list="reviewOrgList"
+              :disabled="isView"
+            />
           </template>
           <!-- 项目实施方案：上传（多文件不限量，与前两区同款交互） -->
           <template #projectImplementationPlanFileList>
@@ -139,6 +147,12 @@
               </div>
               <div v-if="!projectImplementationPlanFileList.length" class="text-14px text-gray-400">未上传文件</div>
             </div>
+            <!-- 联合审查机构审查：机构切换（空间恒定） -->
+            <ReviewBlock
+              v-model:entries="reviewMap.projectImplementationPlan"
+              :org-list="reviewOrgList"
+              :disabled="isView"
+            />
           </template>
           <!-- 地理数据：上传 shp/dwg 解析渲染 + geoman 地图编辑 -->
           <template #locationGeoJson>
@@ -147,6 +161,8 @@
               v-model:file-name="locationFileName"
               :disabled="isView"
             />
+            <!-- 联合审查机构审查：机构切换（空间恒定） -->
+            <ReviewBlock v-model:entries="reviewMap.geoData" :org-list="reviewOrgList" :disabled="isView" />
           </template>
         </BasicForm>
       </TabPane>
@@ -154,7 +170,7 @@
   </BasicDrawer>
 </template>
 <script lang="ts" setup name="ViewsIfcoProjectLibraryManagementProjectManagementForm">
-  import { computed, ref } from 'vue';
+  import { computed, reactive, ref } from 'vue';
   import { Input, TabPane, Tabs, Tag, Upload } from 'antdv-next';
   import { BasicForm, FormSchema, useForm } from '@jeesite/core/components/Form';
   import type { FormActionType } from '@jeesite/core/components/Form/src/types/form';
@@ -184,8 +200,10 @@
     type LibraryKey,
     type ProjectAffiliation,
     type ProjectLibraryItem,
+    type ProjectReviewEntryMap,
   } from '@jeesite/ifco/api/ifco/project-library';
   import GeoDataSection from './geo-data-section';
+  import ReviewBlock from './review-block';
 
   const emit = defineEmits(['success', 'register']);
   const { showMessage } = useMessage();
@@ -219,6 +237,20 @@
   // ── 审查文件页签：地理数据（GeoJSON + 源文件名） ──
   const locationGeoJson = ref('');
   const locationFileName = ref('');
+
+  // ── 审查文件页签：联合审查机构审查（四个区块 × 各机构；机构切换，空间恒定） ──
+  type ReviewSectionKey = 'approvalOrFiling' | 'territorialSpacePlan' | 'projectImplementationPlan' | 'geoData';
+
+  const reviewMap = reactive<Record<ReviewSectionKey, ProjectReviewEntryMap>>({
+    approvalOrFiling: {},
+    territorialSpacePlan: {},
+    projectImplementationPlan: {},
+    geoData: {},
+  });
+
+  /** 联合审查机构 = 本项目已选行业主管部门（未选时给全量选项占位） */
+  /** 联合审查机构：固定四家（不随项目勾选的行业主管部门变化；后端接入后换接口） */
+  const reviewOrgList = computed(() => [...INDUSTRY_SUPERVISION_DEPT_LIST]);
 
   const getTitle = computed(() => {
     if (isView.value) return `查看 · ${record.value.projectName ?? ''}`;
@@ -730,6 +762,10 @@
     );
     locationGeoJson.value = record.value.locationGeoJson ?? '';
     locationFileName.value = record.value.locationFileName ?? '';
+    reviewMap.approvalOrFiling = { ...(record.value.approvalOrFilingReviewMap ?? {}) };
+    reviewMap.territorialSpacePlan = { ...(record.value.territorialSpacePlanReviewMap ?? {}) };
+    reviewMap.projectImplementationPlan = { ...(record.value.projectImplementationPlanReviewMap ?? {}) };
+    reviewMap.geoData = { ...(record.value.geoDataReviewMap ?? {}) };
     // 审查表单在非激活页签中懒挂载：此处不可 await 其方法（未注册会抛错卡死 loading），
     // 已挂载则直接回填，未挂载等注册回调时回填
     if (reviewFormReady.value) applyReviewFormValues();

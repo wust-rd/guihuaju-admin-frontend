@@ -139,8 +139,8 @@ export const FUND_SOURCE_OPTIONS = [
 /** 全部资金来源平铺（假数据生成用） */
 export const FUND_SOURCE_ALL = FUND_SOURCE_OPTIONS.flatMap((group) => group.options.map((item) => item.value));
 
-/** 行业主管部门（先按字段表示例，后端接入后换接口；多选） */
-export const INDUSTRY_SUPERVISION_DEPT_LIST = ['市住更局', '市财政局', '市水务局'];
+/** 行业主管部门（先按字段表示例+市发改委凑四个联合审查机构，后端接入后换接口；多选） */
+export const INDUSTRY_SUPERVISION_DEPT_LIST = ['市住更局', '市财政局', '市水务局', '市发改委'];
 
 /** 责任部门（假数据：各区住更局 + 市级行业主管部门；转库申请的主审单位） */
 export const RESPONSIBLE_DEPT_LIST = [...REPORT_UNITS.map((name) => `${name}住更局`), ...INDUSTRY_SUPERVISION_DEPT_LIST];
@@ -226,6 +226,15 @@ export type ProjectLibraryItem = {
   locationGeoJson?: string;
   /** 地理数据源文件名（.shp/.dwg） */
   locationFileName?: string;
+  // ── 联合审查机构审查（行业主管部门=联合审查单位，对每个文件区块/地理数据出具） ──
+  /** 立项审批或核准备案文件 · 各机构审查（key=机构名） */
+  approvalOrFilingReviewMap?: ProjectReviewEntryMap;
+  /** 国土空间规划符合情况 · 各机构审查 */
+  territorialSpacePlanReviewMap?: ProjectReviewEntryMap;
+  /** 项目实施方案 · 各机构审查 */
+  projectImplementationPlanReviewMap?: ProjectReviewEntryMap;
+  /** 地理数据 · 各机构审查 */
+  geoDataReviewMap?: ProjectReviewEntryMap;
 };
 
 /** 是否选项（是/否） */
@@ -233,6 +242,20 @@ export const YES_NO_OPTIONS = [
   { label: '是', value: '是' },
   { label: '否', value: '否' },
 ];
+
+/** 联合审查结论（三选一） */
+export const REVIEW_RESULT_OPTIONS = ['符合', '不符合', '不涉及'];
+
+/** 单个机构对单个区块的审查（结论三选一 + 意见） */
+export type ProjectReviewEntry = {
+  /** 审查结论（符合/不符合/不涉及，空=未审查） */
+  result: string;
+  /** 审查意见 */
+  opinion: string;
+};
+
+/** 一个区块的各机构审查（key=机构名） */
+export type ProjectReviewEntryMap = Record<string, ProjectReviewEntry>;
 
 /** 地理数据示例（武汉两地块红线；假数据阶段模拟后端解析结果） */
 export const SAMPLE_LOCATION_GEO_JSON = JSON.stringify({
@@ -571,6 +594,8 @@ export const PROJECTS: ProjectLibraryItem[] = [
   ...VERBATIM_ROWS,
   ...GEN_LIBRARY_PLAN.map((library, i): ProjectLibraryItem => {
     const district = REPORT_UNITS[i % REPORT_UNITS.length];
+    const industrySupervisionDeptList =
+      i % 4 === 0 ? [...INDUSTRY_SUPERVISION_DEPT_LIST] : [pick(INDUSTRY_SUPERVISION_DEPT_LIST, i)];
     const affiliation = pick(PROJECT_AFFILIATION_OPTIONS, i).value as ProjectAffiliation;
     const cityArea = affiliation === 'city-area' ? pick(CITY_RENEWAL_AREA_LIST, i) : undefined;
     const statuses = GEN_STATUSES[library];
@@ -595,7 +620,7 @@ export const PROJECTS: ProjectLibraryItem[] = [
       investEstimate: Number((((i * 37) % 1200) / 100 + 0.3).toFixed(4)),
       fundSourceList: [pick(FUND_SOURCE_ALL, i), ...(i % 3 === 0 ? [pick(FUND_SOURCE_ALL, i + 4)] : [])],
       fundSituationRemark: i % 3 === 1 ? pick(GEN_MAIN_CONTENTS, i + 1) : '',
-      industrySupervisionDeptList: i % 4 === 0 ? [...INDUSTRY_SUPERVISION_DEPT_LIST] : [pick(INDUSTRY_SUPERVISION_DEPT_LIST, i)],
+      industrySupervisionDeptList,
       responsibleDept: `${district}住更局`,
       coordinateOrgList: i % 2 === 1 ? [pick(COORDINATE_ORG_LIST, i)] : [],
       implementOrgList,
@@ -629,6 +654,26 @@ export const PROJECTS: ProjectLibraryItem[] = [
       ...(i % 4 === 1 ? { projectImplementationPlanFileList: ['项目实施方案（评审稿）.pdf'] } : {}),
       // 地理数据：i%3===1 的行预置示例红线
       ...(i % 3 === 1 ? { locationGeoJson: SAMPLE_LOCATION_GEO_JSON, locationFileName: '项目红线.shp' } : {}),
+      // 联合审查：按本项目已选行业主管部门逐机构出具（轮转覆盖四个区块，部分留未审查）
+      ...((): Record<string, ProjectReviewEntryMap | undefined> => {
+        function buildMap(pattern: boolean, seed: number): ProjectReviewEntryMap | undefined {
+          if (!pattern) return undefined;
+          return Object.fromEntries(
+            industrySupervisionDeptList.map((org, k) => [
+              org,
+              (i + seed + k) % 4 === 3
+                ? { result: '', opinion: '' }
+                : { result: pick(REVIEW_RESULT_OPTIONS, i + seed + k), opinion: (i + seed + k) % 2 === 0 ? '材料齐备，同意通过。' : '' },
+            ]),
+          );
+        }
+        return {
+          approvalOrFilingReviewMap: buildMap(i % 2 === 0, 0),
+          territorialSpacePlanReviewMap: buildMap(i % 3 === 0, 1),
+          projectImplementationPlanReviewMap: buildMap(i % 2 === 1, 2),
+          geoDataReviewMap: buildMap(i % 3 === 1, 3),
+        };
+      })(),
     };
   }),
 ];
