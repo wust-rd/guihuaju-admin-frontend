@@ -2,10 +2,11 @@
   市住更局 —— 考评分析（三师库管理）
 
   三师库管理 · 子模块三：对入库专家打分考评。布局对齐原型：
-  - 顶部三张排名卡（活跃度/专业覆盖度/评审效率 Top5，绿色渐变条 + 序号 + 姓名 + 得分）；
+  - 顶部三张排名卡（活跃度/专业覆盖度/评审效率 Top5，渐变条）——子组件 rank-card；
   - 下方专家列表（仅展示已入选三师的专家；姓名/性别/年龄/联系电话/身份证号/评价次数/三维度得分/操作）；
   - 操作列「评价」弹出打分 Modal（Rate 半星步进，一颗星 2 分、半颗星 1 分，三维度各 10 分），
-    提交生成一条评价记录并实时刷新平均分；「历史记录」跳评价历史页（history.vue）。
+    提交后实时刷新列表与排名；「历史记录」弹历史评价 Modal——子组件 history-modal。
+
   已接后端（modules/esp）：排名（4.1）/列表（4.2）/打分（4.4）/历史（4.3）/删除（4.5）走接口层
   @jeesite/early-stage-planning/api/early-stage-planning/expert-pool。
 
@@ -17,39 +18,14 @@
   <PageWrapper contentClass="flex flex-col gap-16px">
     <!-- 三张排名卡：活跃度 / 专业覆盖度 / 评审效率 Top5 -->
     <div class="grid grid-cols-3 gap-16px">
-      <div
+      <RankCard
         v-for="card in rankCards"
         :key="card.title"
-        class="bg-white rd-12px b-1 b-solid b-gray-100 p-16px shadow-sm"
-        :style="{ '--accent': card.accent }"
-      >
-        <!-- 标题：左侧彩色竖条 + 标题 -->
-        <div class="flex items-center gap-8px">
-          <span class="h-16px w-4px rd-full" :style="{ background: card.accent }"></span>
-          <span class="text-15px font-600 text-gray-800">{{ card.title }}</span>
-        </div>
-
-        <div v-if="card.rows.length === 0" class="flex h-150px items-center justify-center text-13px text-gray-400">
-          暂无评价数据
-        </div>
-        <div v-else class="mt-12px space-y-14px">
-          <div v-for="(row, i) in card.rows" :key="`${card.title}-${row.name}`" class="flex items-center gap-10px">
-            <!-- 排名：默认灰色数字，悬停高亮为彩色圆形徽标 -->
-            <span
-              class="rank-badge flex h-22px w-22px shrink-0 items-center justify-center rd-full text-13px font-500 text-gray-500"
-              >{{ i + 1 }}</span
-            >
-            <span class="w-56px shrink-0 truncate text-14px text-gray-800" :title="row.name">{{ row.name }}</span>
-            <div class="h-10px flex-1 rd-full bg-[#EEF2F7] overflow-hidden">
-              <div
-                class="h-full rd-full"
-                :style="{ width: `${(row.score / 10) * 100}%`, background: card.barGradient }"
-              ></div>
-            </div>
-            <span class="w-36px shrink-0 text-right text-13px font-500 text-gray-700">{{ row.score.toFixed(1) }}</span>
-          </div>
-        </div>
-      </div>
+        :title="card.title"
+        :accent="card.accent"
+        :bar-gradient="card.barGradient"
+        :rows="card.rows"
+      />
     </div>
 
     <!-- 专家列表 -->
@@ -82,64 +58,18 @@
 
         <div class="flex items-start gap-12px">
           <span class="w-110px shrink-0 text-right text-14px leading-32px text-gray-700">评价说明:</span>
-          <a-textarea v-model:value="rateModal.comment" :rows="4" placeholder="请输入内容" class="flex-1" />
+          <Input.TextArea v-model:value="rateModal.comment" :rows="4" placeholder="请输入内容" class="flex-1" />
         </div>
       </div>
     </Modal>
 
-    <!-- 历史评价 Modal（内嵌，不单独开路由） -->
-    <Modal v-model:open="historyModal.open" width="1400px" centered :footer="null">
-      <template #title>
-        <span>历史评价</span>
-        <span v-if="historyModal.expertName" class="ml-8px text-14px font-400 text-gray-500">{{
-          historyModal.expertName
-        }}</span>
-      </template>
-
-      <div class="max-h-[60vh] overflow-y-auto pr-4px">
-        <div
-          v-if="historyRecords.length === 0"
-          class="flex h-200px items-center justify-center text-14px text-gray-400"
-        >
-          该专家暂无评价记录
-        </div>
-        <div v-else class="space-y-16px">
-          <div v-for="rec in historyRecords" :key="rec.id" class="rd-8px bg-[#EBF3FB] p-16px">
-            <!-- 首行：评价单位 / 评价人 / 评价时间 + 删除 -->
-            <div class="flex items-center gap-24px text-13px text-gray-700">
-              <span>评价单位: {{ rec.org || 'xxx公司' }}</span>
-              <span>评价人: {{ rec.evaluator }}</span>
-              <span>评价时间: {{ rec.time }}</span>
-              <a-button type="link" danger size="small" class="ml-auto" @click="handleHistoryDelete(rec)"
-                >删除</a-button
-              >
-            </div>
-
-            <!-- 三维度星级行 -->
-            <div class="mt-10px flex flex-wrap items-center gap-x-32px gap-y-6px text-13px text-gray-700">
-              <span class="flex items-center gap-8px">
-                活跃度（10分）:
-                <Rate :value="rec.activityStars" allow-half disabled class="text-16px" />
-              </span>
-              <span class="flex items-center gap-8px">
-                专业覆盖度（10分）:
-                <Rate :value="rec.coverageStars" allow-half disabled class="text-16px" />
-              </span>
-              <span class="flex items-center gap-8px">
-                评审效率（10分）:
-                <Rate :value="rec.efficiencyStars" allow-half disabled class="text-16px" />
-              </span>
-            </div>
-
-            <!-- 评价说明 -->
-            <div class="mt-10px flex items-start gap-8px text-13px">
-              <span class="shrink-0 text-gray-700">评价说明:</span>
-              <span class="leading-22px text-gray-600">{{ rec.comment || '—' }}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Modal>
+    <!-- 历史评价 Modal（内嵌展示，不单独开路由） -->
+    <HistoryModal
+      v-model:open="historyModal.open"
+      :expert-id="historyModal.expertId"
+      :expert-name="historyModal.expertName"
+      @deleted="refreshTable"
+    />
   </PageWrapper>
 </template>
 <script lang="ts" setup name="ViewsEarlyStagePlanningExpertPoolEvaluationAnalysisIndex">
@@ -149,15 +79,14 @@
   import { BasicTable, BasicColumn, useTable } from '@jeesite/core/components/Table';
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
   import {
-    espEvaluationDelete,
     espEvaluationList,
-    espEvaluationPage,
     espEvaluationRank,
     espEvaluationSave,
     type EspEvalExpertRow,
-    type EspEvalRecord,
     type EspRankRow,
   } from '@jeesite/early-stage-planning/api/early-stage-planning/expert-pool';
+  import RankCard from './rank-card.vue';
+  import HistoryModal from './history-modal.vue';
 
   const { showMessage } = useMessage();
 
@@ -221,7 +150,7 @@
     { title: '评审效率得分（10）', dataIndex: 'avgEfficiency', width: 140, align: 'center' },
   ];
 
-  /** 操作列：评价（弹打分 Modal）/ 历史记录（跳历史页，携带专家 id 与姓名） */
+  /** 操作列：评价（弹打分 Modal）/ 历史记录（弹历史 Modal） */
   const actionColumn: BasicColumn = {
     width: 150,
     actions: (record: Recordable) => [
@@ -307,50 +236,22 @@
   function refreshTable() {
     reloadExperts().then(() => setTableData(expertRows.value));
     reloadRank();
-    if (historyModal.open) loadHistory();
   }
 
-  /** 历史评价 Modal（内嵌展示，不单独开路由；接口 4.3 分页） */
+  /** 历史评价 Modal 状态（组件内部自行拉 4.3 记录、处理 4.5 删除） */
   const historyModal = reactive({
     open: false,
-    expertId: '' as string,
+    expertId: '',
     expertName: '',
   });
-
-  /** 当前专家的评价记录（按时间倒序，首屏取前 50 条） */
-  const historyRecords = ref<EspEvalRecord[]>([]);
-  async function loadHistory() {
-    const { list } = await espEvaluationPage({ expertId: historyModal.expertId, pageNum: 1, pageSize: 50 });
-    historyRecords.value = list;
-  }
 
   /** 打开历史评价 Modal */
   function openHistory(expert: EspEvalExpertRow) {
     historyModal.expertId = expert.id;
     historyModal.expertName = expert.name;
     historyModal.open = true;
-    loadHistory();
-  }
-
-  /** 删除评价记录（接口 4.5；删除后三维度平均分与排名自动重算） */
-  async function handleHistoryDelete(rec: Recordable) {
-    await espEvaluationDelete(String(rec.id));
-    refreshTable();
-    showMessage('删除成功');
   }
 
   // keep-alive 页签再次进入时同步（其它页可能删除过记录/确认过选用）
   onActivated(refreshTable);
 </script>
-
-<style scoped>
-  .rank-badge {
-    transition:
-      background-color 0.2s,
-      color 0.2s;
-  }
-  .rank-badge:hover {
-    background: var(--accent, #3e8ef7);
-    color: #fff;
-  }
-</style>
