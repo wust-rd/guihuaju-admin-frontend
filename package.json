@@ -40,6 +40,7 @@
     "@jeesite/early-stage-planning": "workspace:*",
     "@jeesite/expropriation-management": "workspace:*",
     "@jeesite/ifco": "workspace:*",
+    "@jeesite/shared": "workspace:*",
     "@jeesite/test": "workspace:*",
     "@jeesite/types": "workspace:*",
     "@jeesite/ui": "workspace:*",

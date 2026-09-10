@@ -13,6 +13,7 @@ import { defineComponent, ref } from 'vue';
 import { DistrictChart } from './district-chart';
 import { InvestTotalCard } from './invest-total-card';
 import { VMap, VMapControls, tiandituStyle, tiandituMapOptions } from '@jeesite/vmap';
+import { RightDrawer } from './right-drawer';
 
 // 区域 tabs：激活项由 RegionTabs 的 svg 发光胶囊指示器表达（按钮本身不再发光）
 const regionTabs: GlowTabItem[] = [
@@ -112,6 +113,8 @@ export default defineComponent({
               {/* 右侧地图：VMap 内部创建/销毁 MapLibre 实例，底图为天地图（矢量 + 中文注记） */}
               <VMap style={tiandituStyle} options={tiandituMapOptions}>
                 <VMapControls class="absolute right-24px bottom-24px z-10" />
+
+                {/* <RightDrawer /> */}
               </VMap>
             </>
           ),
