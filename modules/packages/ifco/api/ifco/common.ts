@@ -88,7 +88,7 @@ export function quarterLabel(quarter: string): string {
   return QUARTER_LABELS[quarter] ?? quarter;
 }
 
-/** 项目报送单位：武汉市各行政区（与体检模块 ADMIN_DIVISIONS 同口径） */
+/** 项目报送单位：武汉市各行政区（与体检模块 DISTRICTS 同口径） */
 export const REPORT_UNITS = [
   '江岸区',
   '江汉区',

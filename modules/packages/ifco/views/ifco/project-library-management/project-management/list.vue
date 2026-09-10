@@ -69,10 +69,25 @@
         <a-button @click="handleTodo('一键导入')"> 一键导入 </a-button>
         <a-button @click="handleTodo('一键导出')"> 一键导出 </a-button>
       </template>
-      <template #areaName="{ record }">{{ withSlash(record.areaName) }}</template>
-      <template #fundSource="{ record }">{{ withSlash(record.fundSource) }}</template>
-      <template #implementOrg="{ record }">{{ withSlash(record.implementOrg) }}</template>
-      <template #coordinateOrg="{ record }">{{ withSlash(record.coordinateOrg) }}</template>
+      <template #renewalAreaName="{ record }">{{ withSlash(record.renewalAreaName) }}</template>
+      <template #functionOrientationList="{ record }">
+        {{ withSlash(joinList(record.functionOrientationList)) }}
+      </template>
+      <template #renewalAreaBatch="{ record }">
+        {{ withSlash(record.renewalAreaBatch ? RENEWAL_AREA_BATCH_LABEL[record.renewalAreaBatch] : '') }}
+      </template>
+      <template #fiveReformType="{ record }">
+        {{ withSlash(record.fiveReformType ? FIVE_REFORM_TYPE_LABEL[record.fiveReformType] : '') }}
+      </template>
+      <template #fundSourceList="{ record }">{{ withSlash(joinList(record.fundSourceList)) }}</template>
+      <template #projectAffiliation="{ record }">
+        {{ withSlash(record.projectAffiliation ? PROJECT_AFFILIATION_LABEL[record.projectAffiliation] : '') }}
+      </template>
+      <template #industrySupervisionDeptList="{ record }">
+        {{ withSlash(joinList(record.industrySupervisionDeptList)) }}
+      </template>
+      <template #implementOrgList="{ record }">{{ withSlash(joinList(record.implementOrgList)) }}</template>
+      <template #coordinateOrgList="{ record }">{{ withSlash(joinList(record.coordinateOrgList)) }}</template>
       <template #status="{ record }">
         <Tag
           :color="record.status === '已退出' ? 'default' : 'blue'"
@@ -101,9 +116,13 @@
   import {
     ACTIONS_BY_STATUS,
     DISTRICTS,
+    FIVE_REFORM_TYPE_LABEL,
+    FIVE_REFORM_TYPE_OPTIONS,
+    FUNCTION_ORIENTATION_OPTIONS,
     LIBRARY_CARDS,
-    OWNERSHIPS,
-    RENEWAL_TYPES,
+    PROJECT_AFFILIATION_LABEL,
+    PROJECT_AFFILIATION_OPTIONS,
+    RENEWAL_AREA_BATCH_LABEL,
     STATUS_OPTIONS,
     filterProjects,
     type LibraryKey,
@@ -145,18 +164,24 @@
   }
 
   // ── 表格 ────────────────────────────────────────────────────────────
-  /** 项目编号/项目名称固定左侧（与复选框列同翼），最新项目状态固定右侧（与操作列同翼） */
+  /** 项目编号/项目名称固定左侧（与复选框列同翼），最新项目状态固定右侧（与操作列同翼）；
+   *  多选字段（顿号拼接）与可空字段空值显示 / */
   const columns: BasicColumn[] = [
-    { title: '项目编号', dataIndex: 'code', width: 100, fixed: 'left' },
-    { title: '项目名称', dataIndex: 'name', width: 240, fixed: 'left', ellipsis: true },
+    { title: '项目编号', dataIndex: 'projectCode', width: 100, fixed: 'left' },
+    { title: '项目名称', dataIndex: 'projectName', width: 240, fixed: 'left', ellipsis: true },
     { title: '行政区', dataIndex: 'district', width: 90 },
-    { title: '片区名称', dataIndex: 'areaName', width: 100, slot: 'areaName' },
-    { title: '五改类别', dataIndex: 'renewalType', width: 110 },
+    { title: '片区名称', dataIndex: 'renewalAreaName', width: 100, slot: 'renewalAreaName' },
+    { title: '片区功能定位', dataIndex: 'functionOrientationList', width: 150, slot: 'functionOrientationList' },
+    { title: '片区批次', dataIndex: 'renewalAreaBatch', width: 90, slot: 'renewalAreaBatch' },
+    { title: '五改类别', dataIndex: 'fiveReformType', width: 110, slot: 'fiveReformType' },
+    { title: '主要建设内容', dataIndex: 'mainConstructionContent', width: 260, ellipsis: true },
     { title: '投资估算(亿元)', dataIndex: 'investEstimate', width: 120, align: 'right' },
-    { title: '资金来源', dataIndex: 'fundSource', width: 180, slot: 'fundSource' },
-    { title: '项目归属', dataIndex: 'ownership', width: 130 },
-    { title: '实施主体', dataIndex: 'implementOrg', width: 140, slot: 'implementOrg' },
-    { title: '统筹主体', dataIndex: 'coordinateOrg', width: 140, slot: 'coordinateOrg' },
+    { title: '资金来源', dataIndex: 'fundSourceList', width: 200, slot: 'fundSourceList' },
+    { title: '项目归属', dataIndex: 'projectAffiliation', width: 130, slot: 'projectAffiliation' },
+    { title: '行业主管部门', dataIndex: 'industrySupervisionDeptList', width: 160, slot: 'industrySupervisionDeptList' },
+    { title: '责任部门', dataIndex: 'responsibleDept', width: 120 },
+    { title: '实施主体', dataIndex: 'implementOrgList', width: 160, slot: 'implementOrgList' },
+    { title: '统筹主体', dataIndex: 'coordinateOrgList', width: 140, slot: 'coordinateOrgList' },
     { title: '最新项目状态', dataIndex: 'status', width: 120, fixed: 'right', slot: 'status' },
   ];
 
@@ -198,12 +223,12 @@
   }
 
   const districtOptions = DISTRICTS.map((name) => ({ label: name, value: name }));
-  const renewalTypeOptions = RENEWAL_TYPES.map((name) => ({ label: name, value: name }));
+  const fiveReformTypeOptions = [...FIVE_REFORM_TYPE_OPTIONS];
   const statusOptions = STATUS_OPTIONS.map((name) => ({ label: name, value: name }));
-  const ownershipOptions = OWNERSHIPS.map((name) => ({ label: name, value: name }));
+  const affiliationOptions = [...PROJECT_AFFILIATION_OPTIONS];
   const yearOptions = (buildYearItems(3) as { key: string; label: string }[]).map((item) => ({
     label: item.label,
-    value: Number(item.key),
+    value: item.key,
   }));
 
   const [registerTable, { setTableData, getForm }] = useTable({
@@ -220,7 +245,7 @@
       baseColProps: { md: 8, lg: 6 },
       labelWidth: 110,
       schemas: [
-        { label: '项目名称', field: 'name', component: 'Input' },
+        { label: '项目名称', field: 'projectName', component: 'Input' },
         {
           label: '行政区',
           field: 'district',
@@ -228,14 +253,14 @@
           componentProps: { options: districtOptions, allowClear: true },
         },
         {
-          label: '五改类型',
-          field: 'renewalType',
+          label: '五改类别',
+          field: 'fiveReformType',
           component: 'Select',
-          componentProps: { options: renewalTypeOptions, allowClear: true },
+          componentProps: { options: fiveReformTypeOptions, allowClear: true },
         },
         {
           label: '入库年份',
-          field: 'storeYear',
+          field: 'inLibraryYear',
           component: 'Select',
           componentProps: { options: yearOptions, allowClear: true },
         },
@@ -247,9 +272,9 @@
         },
         {
           label: '项目归属',
-          field: 'ownership',
+          field: 'projectAffiliation',
           component: 'Select',
-          componentProps: { options: ownershipOptions, allowClear: true },
+          componentProps: { options: affiliationOptions, allowClear: true },
         },
       ],
     },
@@ -288,11 +313,19 @@
   onMounted(() => {
     const { district } = urlParams();
     if (district) getForm().setFieldsValue({ district });
+    // 调试期：默认打开第一条的编辑抽屉，便于反复调整（TODO 联调完成后删除）
+    const first = filterProjects(urlParams())[0];
+    if (first) handleForm({ ...first });
   });
 
   /** 空值显示 / */
-  function withSlash(value: string | undefined) {
+  function withSlash(value: string | number | undefined) {
     return value ? value : '/';
+  }
+
+  /** 多选字段：顿号拼接展示（列表单格约定） */
+  function joinList(list?: string[]) {
+    return (list ?? []).join('、');
   }
 
   /** 占位操作（TODO：随抽屉/后端接入） */
