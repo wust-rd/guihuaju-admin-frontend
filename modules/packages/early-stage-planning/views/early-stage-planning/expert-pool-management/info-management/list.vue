@@ -5,7 +5,8 @@
   结构对齐设计稿：顶部三张统计卡（入库专家总数/正高级工程师/已入选三师，随列表数据实时统计）+
   BasicTable（专家姓名/单位名称/是否已入选三师搜索表单；批量导入 + 新增专家工具栏；
   查看/修改/删除操作列，删除带二次确认）。
-  当前后端尚未介入：数据来自本地 expert-mock.ts（内存副本，刷新恢复），接口就绪后替换加载与保存逻辑。
+  已接后端（modules/esp）：分页/统计/删除走接口层
+  @jeesite/early-stage-planning/api/early-stage-planning/expert-pool（文档 §2）。
 
   菜单注册（后台菜单管理，名称按需）：
    - 链接地址：/early-stage-planning/expert-pool-management/info-management/list
@@ -60,19 +61,25 @@
   import { useDrawer } from '@jeesite/core/components/Drawer';
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
   import { Icon } from '@jeesite/core/components/Icon';
-  import { useExpertPoolStore } from '../expert-store';
+  import {
+    espExpertDelete,
+    espExpertPage,
+    espExpertStat,
+  } from '@jeesite/early-stage-planning/api/early-stage-planning/expert-pool';
   import ExpertForm from './form.vue';
 
   const { showMessage } = useMessage();
 
-  /** 三师库共享 store（Pinia）：三个子模块同一套专家数据 */
-  const expertStore = useExpertPoolStore();
-
-  /** 统计卡（store getter 实时派生：本页或其它子模块的变更都会联动） */
+  /** 统计卡（接口 2.2；增删改后 reloadStat 刷新） */
+  const stat = ref({ total: 0, senior: 0, selected: 0 });
+  async function reloadStat() {
+    stat.value = await espExpertStat();
+  }
+  reloadStat();
   const statCards = computed(() => [
-    { label: '入库专家总数', value: expertStore.expertStats.total },
-    { label: '正高级工程师', value: expertStore.expertStats.senior },
-    { label: '已入选三师', value: expertStore.expertStats.selected },
+    { label: '入库专家总数', value: stat.value.total },
+    { label: '正高级工程师', value: stat.value.senior },
+    { label: '已入选三师', value: stat.value.selected },
   ]);
 
   /** 表格列（对齐原型：姓名/性别/年龄/电话/身份证/专业领域/职称/单位/单位性质/入库时间/是否入选/操作） */
@@ -104,11 +111,8 @@
     ],
   };
 
-  /** 搜索表单：专家姓名/单位名称 模糊，是否已入选三师 精确 */
-  const searchKeyword = ref<Recordable>({});
-
-  const [registerTable, { setTableData }] = useTable({
-    dataSource: expertStore.experts,
+  const [registerTable, { reload }] = useTable({
+    api: espExpertPage,
     columns,
     actionColumn,
     showTableSetting: true,
@@ -135,17 +139,12 @@
         },
       ],
     },
-    // 无后端：查询/重置走 store 本地过滤
-    handleSearchInfoFn: (params: Recordable) => {
-      searchKeyword.value = { ...params };
-      setTableData(expertStore.queryExperts(params));
-      return params;
-    },
   });
 
-  /** 当前条件下重新加载表格（增删改后调用） */
+  /** 当前条件下重新加载表格 + 统计卡（增删改后调用） */
   function refreshTable() {
-    setTableData(expertStore.queryExperts(searchKeyword.value));
+    reload();
+    reloadStat();
   }
 
   const [registerDrawer, { openDrawer, setDrawerProps }] = useDrawer();
@@ -156,23 +155,16 @@
     openDrawer(true, record);
   }
 
-  /** 表单保存回调：新增/修改走 store action（TODO 后端就绪后 action 内改为接口提交） */
-  function handleSuccess(data: Recordable) {
-    if (data.isNewRecord) {
-      expertStore.addExpert(data);
-      showMessage('新增成功（本地演示，未持久化）');
-    } else {
-      expertStore.updateExpert(data.id, data);
-      showMessage('保存成功（本地演示，未持久化）');
-    }
+  /** 表单保存回调（form.vue 已调 2.4 保存接口成功后才 emit） */
+  function handleSuccess() {
     refreshTable();
   }
 
-  /** 删除（走 store action，联动清理评价记录；TODO 后端就绪后改为接口提交） */
-  function handleDelete(record: Recordable) {
-    expertStore.removeExpert(record.id);
+  /** 删除（接口 2.5，后端级联逻辑删除评价记录） */
+  async function handleDelete(record: Recordable) {
+    await espExpertDelete(record.id);
     refreshTable();
-    showMessage('删除成功（本地演示，未持久化）');
+    showMessage('删除成功');
   }
 
   /** 批量导入（TODO: 接入 Excel 上传解析） */

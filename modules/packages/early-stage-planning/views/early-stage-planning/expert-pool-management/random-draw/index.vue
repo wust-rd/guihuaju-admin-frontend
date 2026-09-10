@@ -2,12 +2,13 @@
   市住更局 —— 随机分配三师（三师库管理）
 
   为「片区 × 专业领域 × 三师角色」随机分配专家：
-  - 上方面板：片区单选 + 专业领域多选 + 三师角色复选 + 回避规则 + 重置/抽取；
+  - 上方面板：片区手填 + 专业领域多选（全选/清空一键切换）+ 三师角色复选（默认不勾）+ 回避规则 + 重置/抽取；
   - 点击抽取：按勾选的三师数量生成对应数量的专家卡片（各卡片带责任角色标签）；
   - 卡片操作：单卡「随机更换」换同角色专家、「指定人员」弹出 Modal 按姓名/领域/单位/电话模糊搜索并单选指定；
-  - 结果右侧「随机更换」整批重抽、「确认选用」生成一条分配记录；
+  - 结果右侧「确认选用」生成一条分配记录（整批重抽直接点「抽取」）；
   - 下方「分配记录」列表展示每条记录（时间/抽取片区/抽取领域/抽取人数/三师/详情）。
-  当前后端尚未介入：专家来自三师库共享 store（expert-store.mock），随机在后端模拟，接口就绪后替换。
+  已接后端（modules/esp）：字典（1.1/1.2）、抽取（3.1）、单角色更换（3.2）、确认选用（3.3）、
+  分配记录（3.4/3.5）走接口层 @jeesite/early-stage-planning/api/early-stage-planning/expert-pool。
 -->
 <template>
   <PageWrapper contentClass="flex flex-col gap-16px p-16px">
@@ -19,19 +20,29 @@
       >
         <div class="flex items-center gap-8px bg-black/2 h-40px rd-8px b-1 b-solid b-black/4">
           <span class="w-52px shrink-0 text-right text-14px text-gray-500">片区</span>
-          <Select
+          <Input
             v-model:value="query.district"
-            :options="DISTRICT_OPTIONS"
-            placeholder="请选择片区（单选）"
-            class="w-180px rd-8px"
-            allowClear
-            showSearch
+            placeholder="请输入片区名称"
+            class="w-180px"
             :bordered="false"
+            allowClear
           />
         </div>
 
         <div class="flex items-center gap-8px bg-black/2 h-40px b-1 b-solid b-black/4 rd-8px px-12px">
           <span class="w-60px shrink-0 text-right text-14px text-gray-500">专业领域</span>
+          <!-- 一键全选 / 全不选 -->
+          <a-button type="link" size="small" class="h-24px px-0px text-13px" @click="toggleAllFields(true)"
+            >全选</a-button
+          >
+          <a-button
+            type="link"
+            size="small"
+            class="h-24px px-0px text-13px"
+            :disabled="query.fields.length === 0"
+            @click="toggleAllFields(false)"
+            >清空</a-button
+          >
           <Select
             v-model:value="query.fields"
             :options="FIELD_OPTIONS"
@@ -77,11 +88,6 @@
         <span class="text-18px font-500 text-gray-800">抽取结果</span>
 
         <div class="ml-auto flex items-center gap-12px">
-          <a-button type="link" :disabled="results.length === 0" @click="handleDraw" class="h-36px rd-8px">
-            <span class="inline-flex items-center gap-4px">
-              <span class="i-ant-design:redo-outlined"></span> 随机更换
-            </span>
-          </a-button>
           <a-button type="primary" :disabled="results.length === 0" @click="handleConfirm" class="h-36px rd-8px">
             <span class="inline-flex items-center gap-4px">
               <span class="i-ant-design:check-outlined"></span> 确认选用
@@ -201,9 +207,6 @@
       </div>
 
       <BasicTable @register="registerTable" :showIndexColumn="false" class="px-16px pb-16px">
-        <template #planner="{ record }">{{ record.planner?.name || '—' }}</template>
-        <template #architect="{ record }">{{ record.architect?.name || '—' }}</template>
-        <template #assessor="{ record }">{{ record.assessor?.name || '—' }}</template>
         <template #operation="{ record }">
           <a-button type="link" @click="showRecordDetail(record)">详情</a-button>
         </template>
@@ -294,41 +297,143 @@
       </div>
     </Modal>
 
-    <!-- 分配详情 Modal -->
+    <!-- 分配详情 Modal：摘要条 + 三师 Tab 切换（每 Tab 展示该角色专家完整信息） -->
     <Modal
       v-model:open="detailModal.open"
-      :title="`分配详情 - ${detailModal.record?.district ?? ''}`"
-      width="720px"
+      :title="`分配详情 - ${detailModal.record?.districtName ?? ''}`"
+      width="760px"
       centered
       :footer="null"
     >
-      <div v-if="detailModal.record" class="mt-8px flex flex-col gap-12px">
-        <div class="grid grid-cols-4 gap-x-16px gap-y-10px text-13px text-gray-700">
-          <div class="min-w-0">
-            <div class="text-12px text-gray-400">抽取片区</div>
-            <div class="mt-2px truncate">{{ detailModal.record.district }}</div>
-          </div>
-          <div class="min-w-0 col-span-2">
-            <div class="text-12px text-gray-400">抽取领域</div>
-            <div class="mt-2px truncate">{{ detailModal.record.fieldsText }}</div>
-          </div>
-          <div class="min-w-0">
-            <div class="text-12px text-gray-400">抽取人数</div>
-            <div class="mt-2px truncate">{{ detailModal.record.count }} 人</div>
+      <div v-if="detailModal.record" class="mt-8px flex flex-col gap-16px">
+        <!-- 摘要条：抽取片区/领域/人数/日期/方式/操作人 -->
+        <div class="rd-8px bg-[#F5F9FD] px-16px py-12px">
+          <div class="grid grid-cols-4 gap-x-16px gap-y-10px text-13px text-gray-700">
+            <div class="min-w-0">
+              <div class="text-12px text-gray-400">抽取片区</div>
+              <div class="mt-2px truncate font-500">{{ detailModal.record.districtName }}</div>
+            </div>
+            <div class="min-w-0 col-span-2">
+              <div class="text-12px text-gray-400">抽取领域</div>
+              <div class="mt-2px truncate">{{ detailModal.record.drawFields }}</div>
+            </div>
+            <div class="min-w-0">
+              <div class="text-12px text-gray-400">抽取人数</div>
+              <div class="mt-2px truncate">{{ detailModal.record.drawCount }} 人</div>
+            </div>
+            <div class="min-w-0">
+              <div class="text-12px text-gray-400">抽取日期</div>
+              <div class="mt-2px truncate">{{ detailModal.record.drawDate }}</div>
+            </div>
+            <div class="min-w-0">
+              <div class="text-12px text-gray-400">分配方式</div>
+              <div class="mt-2px truncate">{{ detailModal.record.assignFlag ? '指定人员' : '随机抽取' }}</div>
+            </div>
+            <div class="min-w-0 col-span-2">
+              <div class="text-12px text-gray-400">操作人</div>
+              <div class="mt-2px truncate">{{ detailModal.record.createByName || '—' }}</div>
+            </div>
           </div>
         </div>
 
-        <div v-for="card in detailCards" :key="card.role" class="rd-8px bg-gray-50 p-12px">
-          <div class="flex items-center justify-between">
-            <span class="font-600 text-gray-800">{{ roleLabel(card.role) }}</span>
-            <span class="text-13px text-gray-600">
-              {{ card.expert ? `${card.expert.name}（${card.expert.org}）` : '未分配' }}
-            </span>
-          </div>
-          <div v-if="card.expert" class="mt-6px text-13px text-gray-600">
-            {{ card.expert.field }} · {{ card.expert.phone }}
-          </div>
-        </div>
+        <!-- 三师 Tab：每 Tab 一位专家的完整信息 -->
+        <Tabs v-model:activeKey="detailModal.tab" type="card">
+          <Tabs.TabPane v-for="card in detailCards" :key="card.role">
+            <template #tab>
+              <span class="flex items-center gap-6px">
+                <span>{{ roleLabel(card.role) }}</span>
+                <span v-if="card.expert" class="font-500 text-[#3E7DB8]">{{ card.expert.name }}</span>
+              </span>
+            </template>
+
+            <!-- 专家完整信息：头部卡 + 属性网格 + 两段经历 -->
+            <div v-if="card.expert" class="flex flex-col gap-12px pt-4px">
+              <!-- 头部：姓名头像 + 职称徽标 + 专业标签 + 单位 -->
+              <div class="flex items-center gap-16px rd-8px bg-white b-1 b-solid b-gray-100 px-16px py-14px">
+                <div
+                  class="size-56px shrink-0 rd-full bg-cyan-100 text-cyan-700 flex items-center justify-center text-20px font-500"
+                >
+                  {{ card.expert.name.slice(0, 1) }}
+                </div>
+                <div class="min-w-0 flex-1">
+                  <div class="text-18px font-600 text-gray-900">{{ card.expert.name }}</div>
+                  <div class="mt-6px flex flex-wrap items-center gap-8px">
+                    <span
+                      class="inline-flex items-center gap-4px rd-4px px-8px py-2px text-12px text-amber-500"
+                      :style="{ background: '#FDF3E0' }"
+                    >
+                      <span class="i-ant-design:check-circle-filled"></span>
+                      {{ card.expert.title }}
+                    </span>
+                    <span
+                      class="inline-flex items-center rd-4px px-8px py-2px text-12px text-gray-800"
+                      :style="{ background: '#EFF6FF' }"
+                    >
+                      {{ card.expert.field }}
+                    </span>
+                    <span class="truncate text-13px text-gray-600">{{ card.expert.org }}</span>
+                  </div>
+                </div>
+                <Tag v-if="card.expert.selected" color="success">已入选三师</Tag>
+              </div>
+
+              <!-- 属性网格：等宽三列，按顺序从左到右排满一行再换行 -->
+              <div class="grid grid-cols-3 gap-x-16px gap-y-10px rd-8px bg-[#F5F9FD] px-16px py-12px text-13px">
+                <div class="min-w-0">
+                  <div class="text-12px text-gray-400">性别 / 年龄</div>
+                  <div class="mt-2px truncate" :title="`${card.expert.gender} · ${card.expert.age} 岁`">
+                    {{ card.expert.gender }} · {{ card.expert.age }} 岁
+                  </div>
+                </div>
+                <div class="min-w-0">
+                  <div class="text-12px text-gray-400">联系电话</div>
+                  <div class="mt-2px truncate" :title="card.expert.phone">{{ card.expert.phone }}</div>
+                </div>
+                <div class="min-w-0">
+                  <div class="text-12px text-gray-400">入库时间</div>
+                  <div class="mt-2px truncate">{{ card.expert.joinDate }}</div>
+                </div>
+                <div class="min-w-0">
+                  <div class="text-12px text-gray-400">身份证号</div>
+                  <div class="mt-2px truncate" :title="card.expert.idCard">{{ card.expert.idCard }}</div>
+                </div>
+                <div class="min-w-0">
+                  <div class="text-12px text-gray-400">单位性质</div>
+                  <div class="mt-2px truncate">{{ card.expert.orgType }}</div>
+                </div>
+                <div class="min-w-0">
+                  <div class="text-12px text-gray-400">单位名称</div>
+                  <div class="mt-2px truncate" :title="card.expert.org">{{ card.expert.org }}</div>
+                </div>
+              </div>
+
+              <!-- 主要学习和工作经历 -->
+              <div class="rd-8px b-1 b-solid b-gray-100 px-16px py-12px">
+                <div class="flex items-center gap-6px text-13px font-500 text-gray-700">
+                  <span class="i-ant-design:read-outlined text-14px text-[#3E7DB8]"></span>
+                  主要学习和工作经历
+                </div>
+                <div class="mt-8px whitespace-pre-wrap text-13px leading-22px text-gray-600">{{
+                  card.expert.career
+                }}</div>
+              </div>
+
+              <!-- 过往评审经历 -->
+              <div class="rd-8px b-1 b-solid b-gray-100 px-16px py-12px">
+                <div class="flex items-center gap-6px text-13px font-500 text-gray-700">
+                  <span class="i-ant-design:audit-outlined text-14px text-[#3E7DB8]"></span>
+                  过往评审经历
+                </div>
+                <div class="mt-8px whitespace-pre-wrap text-13px leading-22px text-gray-600">
+                  {{ card.expert.reviewExperience }}
+                </div>
+              </div>
+            </div>
+
+            <!-- 该角色未分配 -->
+            <div v-else class="flex h-160px items-center justify-center text-14px text-gray-400">该角色未分配专家</div>
+          </Tabs.TabPane>
+        </Tabs>
       </div>
     </Modal>
 
@@ -344,15 +449,13 @@
         <div class="grid grid-cols-3 gap-x-16px gap-y-10px text-13px text-gray-700">
           <div class="min-w-0"
             ><div class="text-12px text-gray-400">姓名</div
-            ><div class="mt-2px truncate">{{ expertModal.expert.name }}</div></div
+            ><div class="mt-2px truncate" :title="expertModal.expert.name">{{ expertModal.expert.name }}</div></div
           >
           <div class="min-w-0"
-            ><div class="text-12px text-gray-400">性别</div
-            ><div class="mt-2px truncate">{{ expertModal.expert.gender }}</div></div
-          >
-          <div class="min-w-0"
-            ><div class="text-12px text-gray-400">年龄</div
-            ><div class="mt-2px truncate">{{ expertModal.expert.age }}</div></div
+            ><div class="text-12px text-gray-400">性别 / 年龄</div
+            ><div class="mt-2px truncate">
+              {{ expertModal.expert.gender }} · {{ expertModal.expert.age }} 岁
+            </div></div
           >
           <div class="min-w-0"
             ><div class="text-12px text-gray-400">职称</div
@@ -364,11 +467,11 @@
           >
           <div class="min-w-0"
             ><div class="text-12px text-gray-400">联系电话</div
-            ><div class="mt-2px truncate">{{ expertModal.expert.phone }}</div></div
+            ><div class="mt-2px truncate" :title="expertModal.expert.phone">{{ expertModal.expert.phone }}</div></div
           >
-          <div class="col-span-2 min-w-0"
+          <div class="min-w-0"
             ><div class="text-12px text-gray-400">单位名称</div
-            ><div class="mt-2px truncate">{{ expertModal.expert.org }}</div></div
+            ><div class="mt-2px truncate" :title="expertModal.expert.org">{{ expertModal.expert.org }}</div></div
           >
           <div class="min-w-0"
             ><div class="text-12px text-gray-400">单位性质</div
@@ -380,7 +483,7 @@
           >
           <div class="min-w-0"
             ><div class="text-12px text-gray-400">身份证号</div
-            ><div class="mt-2px truncate">{{ expertModal.expert.idCard }}</div></div
+            ><div class="mt-2px truncate" :title="expertModal.expert.idCard">{{ expertModal.expert.idCard }}</div></div
           >
           <div class="min-w-0"
             ><div class="text-12px text-gray-400">是否已入选三师</div
@@ -408,16 +511,24 @@
 <script lang="ts" setup name="ViewsEarlyStagePlanningExpertPoolRandomDrawIndex">
   import { computed, reactive, ref } from 'vue';
   import { message } from 'antdv-next';
-  import { Checkbox, Input, Modal, Select } from 'antdv-next';
+  import { Checkbox, Input, Modal, Select, Tabs, Tag } from 'antdv-next';
   import { PageWrapper } from '@jeesite/core/components/Page';
   import { BasicTable, BasicColumn, useTable } from '@jeesite/core/components/Table';
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
-  import { dateUtil } from '@jeesite/core/utils/dateUtil';
-  import type { Expert } from '../expert-store';
-  import { EXPERT_FIELDS, useExpertPoolStore } from '../expert-store';
+  import {
+    espDictOptions,
+    espDrawConfirm,
+    espDrawDraw,
+    espDrawRecordDetail,
+    espDrawRecords,
+    espDrawReplace,
+    espExpertPage,
+    type EspDrawRecordDetail,
+    type EspExpert,
+    type EspRole,
+  } from '@jeesite/early-stage-planning/api/early-stage-planning/expert-pool';
 
-  /** 三师角色 key */
-  type RoleKey = 'planner' | 'architect' | 'assessor';
+  type RoleKey = EspRole;
 
   /** 三师角色选项（复选，勾选几个就抽几个卡片） */
   const TYPE_OPTIONS: { label: string; value: RoleKey }[] = [
@@ -432,52 +543,33 @@
     assessor: '责任评估师',
   };
 
-  /** 片区下拉选项（城市更新片区，非行政区；占位，接入接口后替换） */
-  const DISTRICT_OPTIONS = [
-    '汉口沿江片',
-    '汉正街片',
-    '汉阳古城片',
-    '武昌古城片',
-    '青山滨江片',
-    '洪山大学城片',
-    '白沙洲片',
-    '杨园片',
-  ].map((d) => ({
-    label: d,
-    value: d,
-  }));
+  const EXPERT_FIELD_FALLBACK = ['城乡规划学', '建筑学', '市政工程', '交通工程'];
 
-  /** 专业领域下拉选项（直接取自共享专家库 EXPERT_FIELDS，保证下拉与库一致，多选才筛得出专家） */
-  const FIELD_OPTIONS = EXPERT_FIELDS.map((f) => ({ label: f, value: f }));
+  /** 专业领域下拉（接口 1.1 字典；加载前静态兜底） */
+  const FIELD_OPTIONS = ref(EXPERT_FIELD_FALLBACK.map((f) => ({ label: f, value: f })));
+  espDictOptions().then((dict) => {
+    FIELD_OPTIONS.value = dict.fields.map((f) => ({ label: f, value: f }));
+  });
 
-  /** 三师角色勾选状态（默认勾选规划师+评估师） */
-  const typeChecked = reactive<Record<RoleKey, boolean>>({ planner: true, architect: false, assessor: true });
+  /** 三师角色勾选状态（默认全部不勾选） */
+  const typeChecked = reactive<Record<RoleKey, boolean>>({ planner: false, architect: false, assessor: false });
 
-  /** 抽取条件（片区单选、专业领域多选） */
+  /** 抽取条件（片区手填、专业领域多选） */
   const query = reactive({
     district: undefined as string | undefined,
     fields: [] as string[],
     avoidDrawn: true,
   });
 
-  /** 抽取结果：每个勾选的角色一个卡片 */
-  const results = ref<{ role: RoleKey; expert: Expert | null }[]>([]);
+  /** 专业领域一键全选 / 全不选 */
+  function toggleAllFields(selectAll: boolean) {
+    query.fields = selectAll ? FIELD_OPTIONS.value.map((o) => o.value) : [];
+  }
+
+  /** 抽取结果：每个勾选的角色一个卡片（接口 3.1 返回三角色专家，按勾选角色过滤展示） */
+  const results = ref<{ role: RoleKey; expert: EspExpert | null }[]>([]);
   /** 抽取中 loading */
   const drawing = ref(false);
-
-  /** 分配记录 */
-  type DrawRecord = {
-    id: number;
-    time: string;
-    district: string;
-    fields: string[];
-    fieldsText: string;
-    count: number;
-    planner?: Expert;
-    architect?: Expert;
-    assessor?: Expert;
-  };
-  const records = ref<DrawRecord[]>([]);
 
   /** 指定人员 Modal 状态 */
   const assignModal = reactive({
@@ -485,39 +577,39 @@
     role: 'planner' as RoleKey,
     keyword: '',
     field: undefined as string | undefined,
-    selectedId: null as number | null,
+    selectedId: null as string | null,
   });
 
-  /** 记录详情 Modal 状态 */
+  /** 记录详情 Modal 状态（接口 3.5 详情行，含三角色完整专家行；tab 为当前展示的角色） */
   const detailModal = reactive({
     open: false,
-    record: null as DrawRecord | null,
+    tab: 'planner' as RoleKey,
+    record: null as EspDrawRecordDetail | null,
   });
 
   /** 专家详情 Modal 状态（履历摘要「更多信息」） */
   const expertModal = reactive({
     open: false,
-    expert: null as Expert | null,
+    expert: null as EspExpert | null,
   });
 
   const { showMessage } = useMessage();
-  /** 三师库共享 store（Pinia） */
-  const expertStore = useExpertPoolStore();
 
-  /** 记录列表列 */
+  /** 记录列表列（接口 3.4 字段：drawDate/districtName/drawFields/drawCount/xxxName） */
   const recordColumns: BasicColumn[] = [
-    { title: '时间', dataIndex: 'time', width: 110 },
-    { title: '抽取片区', dataIndex: 'district', width: 140 },
-    { title: '抽取领域', dataIndex: 'fieldsText', width: 320, ellipsis: true },
-    { title: '抽取人数', dataIndex: 'count', width: 90, align: 'center' },
-    { title: '责任规划师', dataIndex: 'planner', width: 110, slot: 'planner' },
-    { title: '责任建筑师', dataIndex: 'architect', width: 110, slot: 'architect' },
-    { title: '责任评估师', dataIndex: 'assessor', width: 110, slot: 'assessor' },
+    { title: '时间', dataIndex: 'drawDate', width: 110 },
+    { title: '抽取片区', dataIndex: 'districtName', width: 140 },
+    { title: '抽取领域', dataIndex: 'drawFields', width: 320, ellipsis: true },
+    { title: '抽取人数', dataIndex: 'drawCount', width: 90, align: 'center' },
+    { title: '责任规划师', dataIndex: 'plannerName', width: 110 },
+    { title: '责任建筑师', dataIndex: 'architectName', width: 110 },
+    { title: '责任评估师', dataIndex: 'assessorName', width: 110 },
     { title: '操作', dataIndex: 'operation', width: 90, slot: 'operation' },
   ];
 
-  const [registerTable, { setTableData }] = useTable({
-    dataSource: records.value,
+  /** 分配记录（服务端分页，接口 3.4；确认选用后 reload） */
+  const [registerTable, { reload }] = useTable({
+    api: espDrawRecords,
     columns: recordColumns,
     showTableSetting: true,
     showIndexColumn: false,
@@ -534,50 +626,52 @@
     return TYPE_OPTIONS.filter((o) => typeChecked[o.value]).map((o) => o.value);
   }
 
-  /** 抽取 count 名：从所选领域（未选则全部领域）里抽；排除已抽中的专家（一个专家只当一个师）；avoidDrawn 时排除已入三师 */
-  function drawForRole(count: number, excludeIds: number[] = []): Expert[] {
-    const fields = query.fields.length ? query.fields : FIELD_OPTIONS.map((o) => o.value);
-    const pool = expertStore.experts.filter(
-      (e) => fields.includes(e.field) && (query.avoidDrawn ? !e.selected : true) && !excludeIds.includes(e.id),
-    );
-    const shuffled = [...pool].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, count);
-  }
-
-  /** 抽取 / 整批随机更换：按勾选的三师数量逐角色各抽 1 名（同一次抽取内一个专家只当一个师） */
-  function handleDraw() {
+  /** 抽取 / 整批随机更换（接口 3.1：服务端按 规划师→建筑师→评估师 各抽一名，同批次不重复） */
+  async function handleDraw() {
     const roles = checkedTypes();
     if (roles.length === 0) {
       message.warning('请至少勾选一种三师类型');
       return;
     }
-    if (!query.district) {
-      message.warning('请先选择片区');
+    if (!query.district?.trim()) {
+      message.warning('请先填写片区');
       return;
     }
     drawing.value = true;
-    // 模拟接口耗时
-    setTimeout(() => {
-      const usedIds: number[] = [];
-      results.value = roles.map((role) => {
-        const [expert] = drawForRole(1, usedIds);
-        if (expert) usedIds.push(expert.id);
-        return { role, expert: expert ?? null };
+    try {
+      const data = await espDrawDraw({
+        districtCode: query.district,
+        fields: query.fields,
+        roles,
+        avoidDrawn: query.avoidDrawn,
       });
+      results.value = roles.map((role) => ({ role, expert: data[role] ?? null }));
+    } finally {
       drawing.value = false;
-    }, 400);
+    }
   }
 
-  /** 单卡随机更换：换同角色的另一位专家，其余卡片不动 */
-  function replaceOne(card: { role: RoleKey; expert: Expert | null }) {
-    if (!card.expert) return;
-    const excludeIds = [...results.value.map((r) => r.expert?.id).filter((v): v is number => !!v), card.expert.id];
-    const [replacement] = drawForRole(1, excludeIds);
-    if (!replacement) {
-      message.warning('没有更多符合条件的专家可供更换');
-      return;
+  /** 单卡随机更换（接口 3.2：换同角色另一位专家，其余卡片不动；排除当前批次已抽中的） */
+  async function replaceOne(card: { role: RoleKey; expert: EspExpert | null }) {
+    const excludeIds = results.value.map((r) => r.expert?.id).filter((v): v is string => !!v);
+    try {
+      const { expert } = await espDrawReplace({
+        fields: query.fields,
+        role: card.role,
+        avoidDrawn: query.avoidDrawn,
+        excludeIds,
+      });
+      results.value = results.value.map((r) => (r.role === card.role ? { ...r, expert } : r));
+    } catch (e: any) {
+      message.warning(e?.message || '没有更多符合条件的专家可供更换');
     }
-    results.value = results.value.map((r) => (r.role === card.role ? { ...r, expert: replacement } : r));
+  }
+
+  /** 指定人员候选池（接口 2.1 拉全库，pageSize=100 上限；打开 Modal 时加载） */
+  const assignPool = ref<EspExpert[]>([]);
+  async function loadAssignPool() {
+    const { list } = await espExpertPage({ pageNum: 1, pageSize: 100 });
+    assignPool.value = list;
   }
 
   /** 指定人员候选列表：关键词（姓名/单位/电话）模糊 + 专业领域筛选；排除已在其他卡片上的专家（一人只当一师） */
@@ -587,8 +681,8 @@
     const usedIds = results.value
       .filter((r) => r.role !== assignModal.role)
       .map((r) => r.expert?.id)
-      .filter((v): v is number => typeof v === 'number');
-    return expertStore.experts.filter((e) => {
+      .filter((v): v is string => typeof v === 'string');
+    return assignPool.value.filter((e) => {
       if (usedIds.includes(e.id)) return false;
       if (field && e.field !== field) return false;
       if (kw && !e.name.includes(kw) && !e.org.includes(kw) && !e.phone.includes(kw)) return false;
@@ -596,18 +690,19 @@
     });
   });
 
-  /** 打开指定人员 Modal（记录当前卡片角色） */
-  function openAssign(card: { role: RoleKey; expert: Expert | null }) {
+  /** 打开指定人员 Modal（记录当前卡片角色；加载候选池） */
+  function openAssign(card: { role: RoleKey; expert: EspExpert | null }) {
     assignModal.role = card.role;
     assignModal.keyword = '';
     assignModal.field = undefined;
     assignModal.selectedId = null;
     assignModal.open = true;
+    if (assignPool.value.length === 0) loadAssignPool();
   }
 
-  /** 指定人员：把选中的专家替换到该角色卡片 */
+  /** 指定人员：把选中的专家替换到该角色卡片（确认时走 3.3 并带 assignFlag=true） */
   function confirmAssign() {
-    const matched = expertStore.experts.find((e) => e.id === assignModal.selectedId);
+    const matched = assignPool.value.find((e) => e.id === assignModal.selectedId);
     if (!matched) {
       message.warning('请先选择一名专家');
       return;
@@ -616,14 +711,14 @@
     assignModal.open = false;
   }
 
-  /** 确认选用：生成一条分配记录并刷新列表 */
-  function handleConfirm() {
+  /** 确认选用（接口 3.3：落分配记录 + 专家置已入选；「指定人员」方式确认带 assignFlag=true） */
+  async function handleConfirm() {
     if (results.value.length === 0) {
       message.warning('请先抽取');
       return;
     }
-    if (!query.district) {
-      message.warning('请先选择片区');
+    if (!query.district?.trim()) {
+      message.warning('请先填写片区');
       return;
     }
     const assigned = results.value.filter((r) => r.expert);
@@ -631,58 +726,57 @@
       message.warning('没有已分配专家');
       return;
     }
-    // 抽取领域 = 最终被抽中专家的专业领域（去重），而非勾选的筛选领域
-    const drawnFields = [...new Set(assigned.map((r) => r.expert!.field))];
-    const rec: DrawRecord = {
-      id: records.value.reduce((max, r) => Math.max(max, r.id), 0) + 1,
-      time: dateUtil().format('YYYY-MM-DD'),
-      district: query.district,
-      fields: drawnFields,
-      fieldsText: drawnFields.join('、'),
-      count: assigned.length,
-      planner: results.value.find((r) => r.role === 'planner')?.expert ?? undefined,
-      architect: results.value.find((r) => r.role === 'architect')?.expert ?? undefined,
-      assessor: results.value.find((r) => r.role === 'assessor')?.expert ?? undefined,
-    };
-    records.value = [rec, ...records.value];
-    setTableData(records.value);
-    // 确认选用后，把本次被选中的专家标记为「已入选三师」
-    expertStore.markSelected(assigned.map((r) => r.expert!.id));
-    showMessage('已生成一条分配记录（本地演示，未持久化）');
+    const idOf = (role: RoleKey) => results.value.find((r) => r.role === role)?.expert?.id ?? null;
+    // 抽取领域 = 勾选的筛选领域（与接口约定一致：按条件确认）
+    await espDrawConfirm({
+      districtCode: query.district,
+      fields: query.fields,
+      plannerId: idOf('planner'),
+      architectId: idOf('architect'),
+      assessorId: idOf('assessor'),
+      assignFlag: false,
+    });
+    showMessage('已生成一条分配记录');
     results.value = [];
+    reload();
   }
 
-  /** 打开记录详情 Modal */
-  function showRecordDetail(record: DrawRecord) {
-    detailModal.record = record;
+  /** 打开记录详情 Modal（接口 3.5：详情含三角色完整专家行；默认切到第一个已分配专家的角色） */
+  async function showRecordDetail(record: Recordable) {
     detailModal.open = true;
+    detailModal.record = null;
+    detailModal.record = await espDrawRecordDetail(String(record.id));
+    const firstAssigned = (['planner', 'architect', 'assessor'] as RoleKey[]).find(
+      (role) => detailModal.record?.[role],
+    );
+    detailModal.tab = firstAssigned ?? 'planner';
   }
 
   /** 打开专家详情 Modal（卡片履历摘要「更多信息」） */
-  function openExpertDetail(expert: Expert) {
+  function openExpertDetail(expert: EspExpert) {
     expertModal.expert = expert;
     expertModal.open = true;
   }
 
-  /** 详情 Modal 的三行卡片（三师角色） */
+  /** 详情 Modal 的三行卡片（三师角色；接口详情行直接带 planner/architect/assessor 完整专家行） */
   const detailCards = computed(() => {
     const rec = detailModal.record;
     if (!rec) return [];
     return [
-      { role: 'planner' as RoleKey, expert: rec.planner },
-      { role: 'architect' as RoleKey, expert: rec.architect },
-      { role: 'assessor' as RoleKey, expert: rec.assessor },
+      { role: 'planner' as RoleKey, expert: rec.planner ?? null },
+      { role: 'architect' as RoleKey, expert: rec.architect ?? null },
+      { role: 'assessor' as RoleKey, expert: rec.assessor ?? null },
     ];
   });
 
-  /** 重置：恢复默认条件并清空结果 */
+  /** 重置：所有配置都不填不选（片区空、领域空、三师全不勾、回避规则不勾）并清空结果 */
   function handleReset() {
     query.district = undefined;
     query.fields = [];
-    query.avoidDrawn = true;
-    typeChecked.planner = true;
+    query.avoidDrawn = false;
+    typeChecked.planner = false;
     typeChecked.architect = false;
-    typeChecked.assessor = true;
+    typeChecked.assessor = false;
     results.value = [];
   }
 </script>

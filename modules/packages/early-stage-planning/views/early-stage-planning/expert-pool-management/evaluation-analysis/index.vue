@@ -6,7 +6,8 @@
   - 下方专家列表（仅展示已入选三师的专家；姓名/性别/年龄/联系电话/身份证号/评价次数/三维度得分/操作）；
   - 操作列「评价」弹出打分 Modal（Rate 半星步进，一颗星 2 分、半颗星 1 分，三维度各 10 分），
     提交生成一条评价记录并实时刷新平均分；「历史记录」跳评价历史页（history.vue）。
-  当前后端尚未介入：数据来自本地 evaluation-mock.ts（模块单例，两页共享，刷新页面恢复）。
+  已接后端（modules/esp）：排名（4.1）/列表（4.2）/打分（4.4）/历史（4.3）/删除（4.5）走接口层
+  @jeesite/early-stage-planning/api/early-stage-planning/expert-pool。
 
   菜单注册（后台菜单管理，名称按需）：
    - 链接地址：/early-stage-planning/expert-pool-management/evaluation-analysis/index
@@ -142,23 +143,23 @@
   </PageWrapper>
 </template>
 <script lang="ts" setup name="ViewsEarlyStagePlanningExpertPoolEvaluationAnalysisIndex">
-  import { computed, onActivated, reactive } from 'vue';
+  import { computed, onActivated, reactive, ref } from 'vue';
   import { Input, Modal, Rate, Tag } from 'antdv-next';
   import { PageWrapper } from '@jeesite/core/components/Page';
   import { BasicTable, BasicColumn, useTable } from '@jeesite/core/components/Table';
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
-  import { dateUtil } from '@jeesite/core/utils/dateUtil';
-  import { useUserStore } from '@jeesite/core/store/modules/user';
-  import type { Expert } from '../expert-store';
-  import { useExpertPoolStore } from '../expert-store';
+  import {
+    espEvaluationDelete,
+    espEvaluationList,
+    espEvaluationPage,
+    espEvaluationRank,
+    espEvaluationSave,
+    type EspEvalExpertRow,
+    type EspEvalRecord,
+    type EspRankRow,
+  } from '@jeesite/early-stage-planning/api/early-stage-planning/expert-pool';
 
   const { showMessage } = useMessage();
-
-  /** 三师库共享 store（Pinia） */
-  const expertStore = useExpertPoolStore();
-
-  /** 当前登录用户（评价人姓名取自这里） */
-  const userStore = useUserStore();
 
   /** 打分维度定义（Modal 行 + 得分换算共用） */
   const RATE_DIMENSIONS = [
@@ -168,54 +169,42 @@
   ] as const;
   type RateDimensionKey = (typeof RATE_DIMENSIONS)[number]['key'];
 
-  /** 专家列表行 = 基础信息 + 三维度平均分 + 评价次数（评价/删除记录后自动重算）
-      仅展示「已入选三师」的专家（随机分配确认选用后进入本列表） */
-  const expertRows = computed(() =>
-    expertStore.experts
-      .filter((e) => e.selected)
-      .map((e) => {
-        const avg = expertStore.avgScoreOf(e.id);
-        return {
-          ...e,
-          activityScore: avg.activity,
-          coverageScore: avg.coverage,
-          efficiencyScore: avg.efficiency,
-          evalCount: avg.count,
-        };
-      }),
-  );
+  /** 专家列表（接口 4.2：仅已入选专家，服务端聚合三维度平均分与评价次数）
+      注意：BasicTable 的 dataSource 取的是 setup 时快照，接口返回后必须 setTableData 同步（见下方初始加载） */
+  const expertRows = ref<EspEvalExpertRow[]>([]);
+  async function reloadExperts(name?: string) {
+    expertRows.value = await espEvaluationList(name);
+  }
 
-  /** 三张排名卡（Top5，无数据显示空态）；card 携带本卡主题色 accent 与进度条渐变 barGradient（纯样式） */
+  /** 三张排名卡（接口 4.1：三维度 Top5，无评价专家不参与） */
+  const rank = ref<{ activity: EspRankRow[]; coverage: EspRankRow[]; efficiency: EspRankRow[] }>({
+    activity: [],
+    coverage: [],
+    efficiency: [],
+  });
+  async function reloadRank() {
+    rank.value = await espEvaluationRank();
+  }
+  reloadRank();
+
   const rankCards = computed(() => [
     {
       title: '活跃度排名',
       accent: '#3A8EF6',
       barGradient: 'linear-gradient(90deg, #5AB2FF 0%, #3A8EF6 100%)',
-      rows: [...expertRows.value]
-        .filter((e) => e.activityScore > 0)
-        .sort((a, b) => b.activityScore - a.activityScore)
-        .slice(0, 5)
-        .map((e) => ({ name: e.name, score: e.activityScore })),
+      rows: rank.value.activity.map((r) => ({ name: r.name, score: r.avgScore })),
     },
     {
       title: '专业覆盖度排名',
       accent: '#2AB69B',
       barGradient: 'linear-gradient(90deg, #4ED3B8 0%, #2AB69B 100%)',
-      rows: [...expertRows.value]
-        .filter((e) => e.coverageScore > 0)
-        .sort((a, b) => b.coverageScore - a.coverageScore)
-        .slice(0, 5)
-        .map((e) => ({ name: e.name, score: e.coverageScore })),
+      rows: rank.value.coverage.map((r) => ({ name: r.name, score: r.avgScore })),
     },
     {
       title: '评审效率排名',
       accent: '#F7A832',
       barGradient: 'linear-gradient(90deg, #FFC163 0%, #F7A832 100%)',
-      rows: [...expertRows.value]
-        .filter((e) => e.efficiencyScore > 0)
-        .sort((a, b) => b.efficiencyScore - a.efficiencyScore)
-        .slice(0, 5)
-        .map((e) => ({ name: e.name, score: e.efficiencyScore })),
+      rows: rank.value.efficiency.map((r) => ({ name: r.name, score: r.avgScore })),
     },
   ]);
 
@@ -227,19 +216,19 @@
     { title: '联系电话', dataIndex: 'phone', width: 130 },
     { title: '身份证号', dataIndex: 'idCard', width: 170 },
     { title: '评价次数', dataIndex: 'evalCount', width: 90, align: 'center' },
-    { title: '活跃度得分（10）', dataIndex: 'activityScore', width: 140, align: 'center' },
-    { title: '专业覆盖度得分（10）', dataIndex: 'coverageScore', width: 160, align: 'center' },
-    { title: '评审效率得分（10）', dataIndex: 'efficiencyScore', width: 140, align: 'center' },
+    { title: '活跃度得分（10）', dataIndex: 'avgActivity', width: 140, align: 'center' },
+    { title: '专业覆盖度得分（10）', dataIndex: 'avgCoverage', width: 160, align: 'center' },
+    { title: '评审效率得分（10）', dataIndex: 'avgEfficiency', width: 140, align: 'center' },
   ];
 
   /** 操作列：评价（弹打分 Modal）/ 历史记录（跳历史页，携带专家 id 与姓名） */
   const actionColumn: BasicColumn = {
     width: 150,
     actions: (record: Recordable) => [
-      { label: '评价', onClick: () => openRateModal(record as unknown as Expert) },
+      { label: '评价', onClick: () => openRateModal(record as unknown as EspEvalExpertRow) },
       {
         label: '历史记录',
-        onClick: () => openHistory(record as unknown as Expert),
+        onClick: () => openHistory(record as unknown as EspEvalExpertRow),
       },
     ],
   };
@@ -255,15 +244,17 @@
     formConfig: {
       baseColProps: { md: 6, lg: 5 },
       labelWidth: 100,
-      // TODO: 分数区间过滤接入接口后由后端执行；本地先仅支持姓名过滤
       schemas: [{ label: '专家姓名', field: 'name', component: 'Input', componentProps: { placeholder: '请输入' } }],
     },
+    // 接口 4.2 支持姓名模糊（整包返回，前端仍做本地分页展示）
     handleSearchInfoFn: (params: Recordable) => {
-      const name = String(params.name ?? '').trim();
-      setTableData(expertRows.value.filter((e) => !name || e.name.includes(name)));
+      reloadExperts(String(params.name ?? '').trim() || undefined).then(() => setTableData(expertRows.value));
       return params;
     },
   });
+
+  // 初始加载：dataSource 快照为空数组，接口返回后必须 setTableData 同步进表格
+  reloadExperts().then(() => setTableData(expertRows.value));
 
   /** 打分 Modal 状态（三维度星级 0.5 步进 + 评价说明） */
   const rateModal = reactive({
@@ -273,11 +264,11 @@
     coverage: 0,
     efficiency: 0,
     comment: '',
-    expert: null as Expert | null,
+    expert: null as EspEvalExpertRow | null,
   });
 
   /** 打开打分 Modal（星级与说明每次重置） */
-  function openRateModal(expert: Expert) {
+  function openRateModal(expert: EspEvalExpertRow) {
     rateModal.expert = expert;
     rateModal.activity = 0;
     rateModal.coverage = 0;
@@ -286,8 +277,8 @@
     rateModal.open = true;
   }
 
-  /** 提交评价：生成一条记录 + 三维度平均分实时联动（TODO: 后端就绪后改为接口提交） */
-  function submitRate() {
+  /** 提交评价（接口 4.4：评价人/评价单位由后端取当前登录用户快照，前端不传） */
+  async function submitRate() {
     const expert = rateModal.expert;
     if (!expert) return;
     if (!rateModal.activity || !rateModal.coverage || !rateModal.efficiency) {
@@ -295,58 +286,60 @@
       return;
     }
     rateModal.loading = true;
-    // 模拟接口耗时
-    setTimeout(() => {
-      expertStore.addEvaluation({
+    try {
+      await espEvaluationSave({
         expertId: expert.id,
         activityStars: rateModal.activity,
         coverageStars: rateModal.coverage,
         efficiencyStars: rateModal.efficiency,
-        time: dateUtil().format('YYYY-MM-DD'),
-        // 评价单位取当前登录用户所在机构/单位（officeName → company 兜底）
-        org: userStore.getUserInfo.officeName || userStore.getUserInfo.company || '—',
         comment: rateModal.comment,
-        // 评价人取当前登录用户姓名，未取到回退登录账号 / 管理员
-        evaluator: userStore.getUserInfo.userName || userStore.getUserInfo.loginCode || '管理员',
       });
-      rateModal.loading = false;
       rateModal.open = false;
-      // 评价记录变化后刷新表格：让「评价次数 / 三维度平均分」即时联动
+      // 评价记录变化后刷新列表与排名：让「评价次数 / 三维度平均分 / Top5」即时联动
       refreshTable();
-      showMessage('评价成功（本地演示，未持久化）');
-    }, 300);
+      showMessage('评价成功');
+    } finally {
+      rateModal.loading = false;
+    }
   }
 
-  /** 重算平均分并同步表格（记录变化后调用；expertRows 为 computed，刷新数据源即可） */
+  /** 重新拉取列表与排名（评价/删除后调用） */
   function refreshTable() {
-    setTableData(expertRows.value);
+    reloadExperts().then(() => setTableData(expertRows.value));
+    reloadRank();
+    if (historyModal.open) loadHistory();
   }
 
-  /** 历史评价 Modal（内嵌展示，不单独开路由） */
+  /** 历史评价 Modal（内嵌展示，不单独开路由；接口 4.3 分页） */
   const historyModal = reactive({
     open: false,
-    expertId: 0,
+    expertId: '' as string,
     expertName: '',
   });
 
-  /** 当前专家的评价记录 */
-  const historyRecords = computed(() => expertStore.recordsOf(historyModal.expertId));
+  /** 当前专家的评价记录（按时间倒序，首屏取前 50 条） */
+  const historyRecords = ref<EspEvalRecord[]>([]);
+  async function loadHistory() {
+    const { list } = await espEvaluationPage({ expertId: historyModal.expertId, pageNum: 1, pageSize: 50 });
+    historyRecords.value = list;
+  }
 
   /** 打开历史评价 Modal */
-  function openHistory(expert: Expert) {
+  function openHistory(expert: EspEvalExpertRow) {
     historyModal.expertId = expert.id;
     historyModal.expertName = expert.name;
     historyModal.open = true;
+    loadHistory();
   }
 
-  /** 删除评价记录（删除后三维度平均分自动重算；TODO: 后端就绪后改为接口提交） */
-  function handleHistoryDelete(rec: Recordable) {
-    expertStore.removeEvaluation(rec.id);
+  /** 删除评价记录（接口 4.5；删除后三维度平均分与排名自动重算） */
+  async function handleHistoryDelete(rec: Recordable) {
+    await espEvaluationDelete(String(rec.id));
     refreshTable();
-    showMessage('删除成功（本地演示，未持久化）');
+    showMessage('删除成功');
   }
 
-  // keep-alive 页签再次进入时同步（历史页可能删除过记录）
+  // keep-alive 页签再次进入时同步（其它页可能删除过记录/确认过选用）
   onActivated(refreshTable);
 </script>
 

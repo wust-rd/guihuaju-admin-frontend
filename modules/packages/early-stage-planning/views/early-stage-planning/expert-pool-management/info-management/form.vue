@@ -5,7 +5,7 @@
    - force-render 预挂载（消除首次打开时表单未注册的竞态）；
    - 查看模式：list.vue 在 openDrawer 前预设 showFooter，本组件内只做表单级 disabled；
    - 回调 try/finally 兜底复位 loading。
-  当前后端尚未介入：保存仅校验后 emit success（携带表单值与记录标识），由父级落内存副本。
+  已接后端（modules/esp）：详情回显走 2.3、字典下拉走 1.1、保存走 2.4（文档 §2）。
 -->
 <template>
   <BasicDrawer ref="drawerRef" v-bind="$attrs" width="600px" force-render @register="registerDrawer" @ok="handleSubmit">
@@ -22,7 +22,12 @@
   import { Icon } from '@jeesite/core/components/Icon';
   import { BasicForm, FormSchema, useForm } from '@jeesite/core/components/Form';
   import { BasicDrawer, useDrawerInner } from '@jeesite/core/components/Drawer';
-  import { EXPERT_FIELDS, EXPERT_ORG_TYPES, EXPERT_TITLES } from '../expert-store';
+  import {
+    espDictOptions,
+    espExpertForm,
+    espExpertSave,
+    type EspExpert,
+  } from '@jeesite/early-stage-planning/api/early-stage-planning/expert-pool';
 
   const emit = defineEmits(['success', 'register']);
 
@@ -35,6 +40,14 @@
     icon: 'ant-design:team-outlined',
     value: isView.value ? '查看专家' : record.value.isNewRecord ? '新增专家' : '修改专家',
   }));
+
+  /** 字典选项（接口 1.1；加载完成前用静态兜底，避免下拉空白） */
+  const dictOptions = ref<{ fields: string[]; titles: string[]; orgTypes: string[] }>({
+    fields: ['城乡规划学', '建筑学'],
+    titles: ['高级工程师', '正高级工程师'],
+    orgTypes: ['民营企业', '国有企业', '党政机关', '事业单位', '其他'],
+  });
+  const toOptions = (list: string[]) => list.map((v) => ({ label: v, value: v }));
 
   const inputFormSchemas: FormSchema[] = [
     {
@@ -82,14 +95,14 @@
       label: '专业领域',
       field: 'field',
       component: 'Select',
-      componentProps: { options: EXPERT_FIELDS.map((f) => ({ label: f, value: f })), allowClear: true },
+      componentProps: () => ({ options: toOptions(dictOptions.value.fields), allowClear: true, placeholder: '请选择' }),
       rules: [{ required: true, message: '请选择专业领域' }],
     },
     {
       label: '职称',
       field: 'title',
       component: 'Select',
-      componentProps: { options: EXPERT_TITLES.map((t) => ({ label: t, value: t })), allowClear: true },
+      componentProps: () => ({ options: toOptions(dictOptions.value.titles), allowClear: true, placeholder: '请选择' }),
       rules: [{ required: true, message: '请选择职称' }],
     },
     {
@@ -103,8 +116,18 @@
       label: '单位性质',
       field: 'orgType',
       component: 'Select',
-      componentProps: { options: EXPERT_ORG_TYPES.map((t) => ({ label: t, value: t })), allowClear: true },
+      componentProps: () => ({
+        options: toOptions(dictOptions.value.orgTypes),
+        allowClear: true,
+        placeholder: '请选择',
+      }),
       rules: [{ required: true, message: '请选择单位性质' }],
+    },
+    {
+      label: '入库时间',
+      field: 'joinDate',
+      component: 'DatePicker',
+      componentProps: { valueFormat: 'YYYY-MM-DD', style: 'width: 100%', placeholder: '请选择' },
     },
     {
       label: '是否已入选三师',
@@ -149,21 +172,32 @@
     try {
       await resetFields();
       isView.value = !!data?.isView;
-      record.value = (data || {}) as Recordable;
       record.value.isNewRecord = data?.isNewRecord ?? data?.id == null;
+
+      // 修改/查看：详情接口回显（列表行数据仅作兜底）；新增：空骨架
+      if (!record.value.isNewRecord) {
+        const detail = await espExpertForm(String(data.id));
+        record.value = { ...detail, isNewRecord: false, isView: isView.value };
+      }
+
+      // 字典接口（1.1）→ 覆盖三处下拉选项
+      dictOptions.value = await espDictOptions();
+
+      const r = record.value;
       await setFieldsValue({
-        name: record.value.name ?? '',
-        gender: record.value.gender ?? '男',
-        age: record.value.age ?? 35,
-        phone: record.value.phone ?? '',
-        idCard: record.value.idCard ?? '',
-        field: record.value.field ?? undefined,
-        title: record.value.title ?? undefined,
-        org: record.value.org ?? '',
-        orgType: record.value.orgType ?? undefined,
-        selected: record.value.selected ?? undefined,
-        career: record.value.career ?? '',
-        reviewExperience: record.value.reviewExperience ?? '',
+        name: r.name ?? '',
+        gender: r.gender ?? '男',
+        age: r.age ?? 35,
+        phone: r.phone ?? '',
+        idCard: r.idCard ?? '',
+        field: r.field ?? undefined,
+        title: r.title ?? undefined,
+        org: r.org ?? '',
+        orgType: r.orgType ?? undefined,
+        joinDate: r.joinDate ?? undefined,
+        selected: r.selected ?? undefined,
+        career: r.career ?? '',
+        reviewExperience: r.reviewExperience ?? '',
       });
       // 查看模式：表单级禁用（showFooter 已由 list.vue 在 openDrawer 前预设）
       await setProps({ disabled: isView.value });
@@ -186,9 +220,10 @@
       }
       return;
     }
-    // TODO: 后端接入后在此调用保存接口
-    // 本地演示：success 携带表单值 + 记录标识，父级更新内存副本
-    emit('success', { ...data, id: record.value.id, isNewRecord: !!record.value.isNewRecord });
+    // 保存接口（2.4）：id 空 = 新增，非空 = 修改
+    await espExpertSave({ ...data, id: record.value.id ?? '' } as Partial<EspExpert>);
+    showMessage(record.value.isNewRecord ? '新增成功' : '保存成功');
+    emit('success');
     setTimeout(closeDrawer);
   }
 </script>
