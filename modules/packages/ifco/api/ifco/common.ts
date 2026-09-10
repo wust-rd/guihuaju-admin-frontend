@@ -88,8 +88,11 @@ export function quarterLabel(quarter: string): string {
   return QUARTER_LABELS[quarter] ?? quarter;
 }
 
-/** 项目报送单位：武汉市各行政区（与体检模块 DISTRICTS 同口径） */
+/** 项目报送单位：市级单位在前（市财政厅/市发改委/市直单位），其后为武汉市各行政区（与体检模块 DISTRICTS 同口径） */
 export const REPORT_UNITS = [
+  '市财政厅',
+  '市发改委',
+  '市直单位',
   '江岸区',
   '江汉区',
   '硚口区',
@@ -104,6 +107,9 @@ export const REPORT_UNITS = [
   '新洲区',
   '汉南区',
 ] as const;
+
+/** 报送单位默认值：市财政厅（单位清单第一项） */
+export const DEFAULT_REPORT_UNIT: string = '市财政厅';
 
 /** 周期 key：`${year}-Q${quarter}` */
 export function toPeriodKey(year: number | string, quarter: string): string {

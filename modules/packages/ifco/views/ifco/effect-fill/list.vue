@@ -8,7 +8,7 @@
   - 「数|面积」双值行(226/227/245/246)拆为「…数」「…面积」两行，共用同一代码；
   - 全部数据行直接填报（InputNumber），无汇总行/count 行/合计级录入行，
     「其中：/合计中：」仅为名称前缀与视觉层级，不参与自动求和；
-  - 数据按「年份 × 季度 × 报送单位」组织（默认江岸区），存成效域独立仓库
+  - 数据按「年份 × 季度 × 报送单位」组织（默认市财政厅），存成效域独立仓库
     effectFillStore，与进展域互不影响。
 
   其余约定（列级编辑/新增项目 Modal+自动滚右/带入锁删/空值置空/奇偶淡青列/
@@ -88,7 +88,14 @@
   import { dateUtil } from '@jeesite/core/utils/dateUtil';
   import { buildYearItems } from '@jeesite/core/libs/year';
   import type { ProjectColumn } from '@jeesite/ifco/api/ifco/common';
-  import { QUARTER_OPTIONS, REPORT_UNITS, quarterLabel, toPeriodKey, prevPeriod } from '@jeesite/ifco/api/ifco/common';
+  import {
+    DEFAULT_REPORT_UNIT,
+    QUARTER_OPTIONS,
+    REPORT_UNITS,
+    quarterLabel,
+    toPeriodKey,
+    prevPeriod,
+  } from '@jeesite/ifco/api/ifco/common';
   import type { EffectIndicatorDef } from '@jeesite/ifco/api/ifco/effect-fill';
   import {
     EFFECT_INDICATORS,
@@ -120,7 +127,7 @@
   // dayjs 的 quarter() 需 quarterOfYear 插件，这里用 month() 推导当前季度
   const quarter = ref(String(Math.floor(dateUtil().month() / 3) + 1));
   /** 项目报送单位(武汉各行政区,数据维度:切换即切换数据集;默认第一个区) */
-  const reportUnit = ref<string>(REPORT_UNITS[0]);
+  const reportUnit = ref<string>(DEFAULT_REPORT_UNIT);
   const reportUnitOptions = REPORT_UNITS.map((name) => ({ label: name, value: name }));
 
   // ── 数据:周期 × 报送单位(成效域独立仓库,懒初始化;无类目维度) ──────────
@@ -385,7 +392,7 @@
         key: 'name',
         title: '指标名称',
         dataIndex: 'name',
-        width: 440,
+        width: 400,
         fixed: 'left',
         className: 'effect-fill-col-name',
       },

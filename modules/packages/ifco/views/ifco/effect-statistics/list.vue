@@ -148,7 +148,7 @@
         key: 'name',
         title: '指标名称',
         dataIndex: 'name',
-        width: 440,
+        width: 400,
         fixed: 'left',
         className: 'effect-stat-col-name',
       },

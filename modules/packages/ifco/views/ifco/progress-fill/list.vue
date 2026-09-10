@@ -25,7 +25,7 @@
   菜单注册(菜单名称「项目进展填报」):
    - 链接地址:/ifco/progress-fill/list
    - 组件位置:/ifco/progress-fill/list(与链接地址一致)
-  当前后端尚未介入,数据为内存假数据(每周期 × 每单位 × 叶子类目 20 个示例项目列,默认江岸区);
+  当前后端尚未介入,数据为内存假数据(每周期 × 每单位 × 叶子类目 20 个示例项目列,默认市财政厅);
   指标清单与汇总口径见 @jeesite/ifco/api/ifco/progress-fill,Excel 导出见同目录 export-excel.ts。
 -->
 <template>
@@ -134,6 +134,7 @@
     INDICATORS,
     INDICATOR_MAP,
     LEAF_CATEGORIES,
+    DEFAULT_REPORT_UNIT,
     QUARTER_OPTIONS,
     REPORT_UNITS,
     cellValue,
@@ -167,7 +168,7 @@
   // dayjs 的 quarter() 需 quarterOfYear 插件，这里用 month() 推导当前季度
   const quarter = ref(String(Math.floor(dateUtil().month() / 3) + 1));
   /** 项目报送单位(武汉各行政区,数据维度:切换即切换数据集;默认第一个区) */
-  const reportUnit = ref<string>(REPORT_UNITS[0]);
+  const reportUnit = ref<string>(DEFAULT_REPORT_UNIT);
   const reportUnitOptions = REPORT_UNITS.map((name) => ({ label: name, value: name }));
 
   // ── 类目选择:一级 + 嵌套二级 ────────────────────────────────────────

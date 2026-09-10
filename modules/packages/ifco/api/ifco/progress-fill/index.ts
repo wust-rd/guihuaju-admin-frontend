@@ -42,6 +42,7 @@ export type { CategoryDef, ProjectColumn, TabFillData, PeriodFillData } from '..
 export type { FillStore as ProgressFillStore } from '../common';
 export {
   CATEGORIES,
+  DEFAULT_REPORT_UNIT,
   CATEGORY_MAP,
   DATA_CATEGORIES,
   LEAF_CATEGORIES,
