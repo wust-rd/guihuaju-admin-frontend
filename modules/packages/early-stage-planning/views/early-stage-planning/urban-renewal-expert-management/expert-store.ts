@@ -38,6 +38,8 @@ export type UrbanExpert = {
   selected: boolean;
   /** 主要经历 */
   career: string;
+  /** 过往评审经历 */
+  reviewExperience: string;
 };
 
 /** 专家评价记录（专家评价打分生成） */
@@ -65,6 +67,8 @@ export type EvalRecord = {
 /** 城市更新项目（项目评估展示） */
 export type UrbanProject = {
   id: number;
+  /** 记录编码（下钻路由 {id} 参数使用） */
+  code: string;
   /** 项目名称 */
   name: string;
   /** 行政区（取自 URBAN_DISTRICTS 列表） */
@@ -89,10 +93,20 @@ export type UrbanProject = {
   materials: string[];
   /** 参与专家姓名列表 */
   experts: string[];
+  /** 组长（参与专家之一） */
+  leader: string;
   /** 开始时间（YYYY-MM-DD） */
   startDate: string;
-  /** 状态（评估中/待提交/已完成） */
+  /** 状态四态流转：待提交 → 评估中（等待专家评价项目）→ 待评价（对专家进行评价）→ 已完成 */
   status: string;
+  /** 是否已完成对本项目专家的评价（待评价 → 已完成 的条件） */
+  expertsEvaluated?: boolean;
+  /** 评估结果（通过/不通过，评估页提交） */
+  evalResult?: string;
+  /** 评估意见 */
+  evalOpinion?: string;
+  /** 评估附件（文件名列表） */
+  evalAttachments?: string[];
 };
 
 /** 片区名称列表（项目评估搜索/新增下拉取自这里） */
@@ -118,6 +132,28 @@ export const URBAN_TITLES = ['高级工程师', '正高级工程师'] as const;
 
 /** 单位性质选项 */
 export const URBAN_ORG_TYPES = ['民营企业', '国有企业', '党政机关', '事业单位', '其他'] as const;
+
+/** 提交前校验评估项目必填项（除资金来源/项目投资估算外都必填；表单提交与列表提交共用），返回缺失项提示列表 */
+export function validateProjectForSubmit(p: Partial<UrbanProject>): string[] {
+  const missing: string[] = [];
+  const checks: [unknown, string][] = [
+    [p.name, '项目名称'],
+    [p.adminDistrict, '行政区'],
+    [p.district, '片区名称'],
+    [p.coordinator, '统筹主体'],
+    [p.implementOrg, '实施主体'],
+    [p.reviewMode, '评估模式'],
+    [p.dept, '责任部门'],
+    [p.content, '主要项目内容'],
+  ];
+  for (const [val, label] of checks) {
+    if (!val) missing.push(label);
+  }
+  if (!p.materials || p.materials.length === 0) missing.push('评估材料');
+  if (!p.experts || p.experts.length < 3) missing.push('至少 3 名参与专家');
+  if (!p.leader) missing.push('组长');
+  return missing;
+}
 
 // ---- 假数据 ----
 
@@ -157,6 +193,13 @@ const CAREERS = [
   '长期开展城市生态与海绵城市更新研究，主持多项滨水空间与绿地系统更新项目。',
 ];
 
+const REVIEWS = [
+  '多次担任市城市更新专家评审、重点更新片区方案评审专家。',
+  '受聘市住建局专家库，参与年度城市更新项目评选与验收评审。',
+  '长期参与省级规划成果评优及城市更新重大项目咨询论证。',
+  '担任多所高校研究生论文评审与城市更新课题答辩专家。',
+];
+
 function createMockExperts(): UrbanExpert[] {
   return NAMES.map((name, i) => ({
     id: i + 1,
@@ -174,6 +217,7 @@ function createMockExperts(): UrbanExpert[] {
       .format('YYYY-MM-DD'),
     selected: false,
     career: CAREERS[i % CAREERS.length],
+    reviewExperience: REVIEWS[i % REVIEWS.length],
   }));
 }
 
@@ -184,8 +228,10 @@ function createMockProjects(): UrbanProject[] {
   for (let i = 0; i < counts; i++) {
     const district = URBAN_DISTRICTS[i % URBAN_DISTRICTS.length];
     const experts = [pool[i % pool.length], pool[(i + 2) % pool.length], pool[(i + 4) % pool.length]];
+    const expertList = experts.filter((v, idx, arr) => arr.indexOf(v) === idx);
     rows.push({
       id: i + 1,
+      code: `URBANPROJ-${String(i + 1).padStart(4, '0')}`,
       name: `${district}老旧小区改造项目`,
       adminDistrict: district,
       district: `${district}中心片`,
@@ -197,27 +243,47 @@ function createMockProjects(): UrbanProject[] {
       investment: (5 + (i % 8)).toFixed(1),
       content: '实施老旧小区改造、片区基础设施更新、公共服务设施补短板等内容，改善人居环境。',
       materials: ['实施方案'],
-      experts: experts.filter((v, idx, arr) => arr.indexOf(v) === idx),
+      experts: expertList,
+      leader: expertList[0] || '',
       startDate: dateUtil()
         .subtract(i * 4, 'day')
         .format('YYYY-MM-DD'),
-      status: i % 10 === 3 ? '待提交' : i % 2 === 0 ? '评估中' : '已完成',
+      status: i % 2 === 0 ? '评估中' : '待提交',
     });
   }
   return rows;
 }
+
+/** 在线抽取记录（确认选用生成，存 store 以便切换页签不丢失） */
+export type DrawRecord = {
+  id: number;
+  time: string;
+  name: string;
+  implementOrg: string;
+  coordinator: string;
+  fields: string[];
+  fieldsText: string;
+  count: number;
+  experts: UrbanExpert[];
+};
 
 /** 城市更新专家库 state 形状 */
 type UrbanPoolState = {
   experts: UrbanExpert[];
   evalRecords: EvalRecord[];
   projects: UrbanProject[];
+  /** 在线抽取记录（确认选用生成，切换页签不丢失） */
+  drawRecords: DrawRecord[];
   /** 是否处于「去抽取为新增项目挑选专家」的跨模块挑选模式 */
   pickMode: boolean;
   /** 在线抽取为新增项目挑好的专家（带回来回填参与专家） */
   pickedExperts: PickedExpert[];
+  /** 挑选模式中最近一次确认选用的专家（返回时带回用） */
+  pickLatest: PickedExpert[];
   /** 挑选结束后返回的路由（新增项目表单页） */
   pickReturn: string;
+  /** 去抽取时带入在线抽取的项目信息（项目名称/统筹主体/实施主体） */
+  pickInfo: { name: string; coordinator: string; implementOrg: string };
 };
 
 /** 被挑选的专家（新增项目·参与专家行数据） */
@@ -232,9 +298,12 @@ export const useUrbanExpertStore = defineStore('urbanExpertPool', {
     experts: createMockExperts(),
     evalRecords: [],
     projects: createMockProjects(),
+    drawRecords: [],
     pickMode: false,
     pickedExperts: [],
+    pickLatest: [],
     pickReturn: '',
+    pickInfo: { name: '', coordinator: '', implementOrg: '' },
   }),
 
   getters: {
@@ -294,15 +363,21 @@ export const useUrbanExpertStore = defineStore('urbanExpertPool', {
       this.experts = this.experts.map((e) => (ids.includes(e.id) ? { ...e, selected: true } : e));
     },
 
-    /** 新增评估项目（插到最前；TODO: 后端就绪后改为接口提交） */
+    /** 新增评估项目（插到最前；code 自动生成；TODO: 后端就绪后改为接口提交） */
     addProject(data: Partial<UrbanProject>) {
       const id = this.projects.reduce((max, p) => Math.max(max, p.id), 0) + 1;
-      this.projects = [{ ...data, id } as UrbanProject, ...this.projects];
+      const code = `URBANPROJ-${String(id).padStart(4, '0')}`;
+      this.projects = [{ ...data, id, code } as UrbanProject, ...this.projects];
     },
 
-    /** 更新项目状态（编辑/提交/生成报告后调用） */
-    updateProjectStatus(id: number, status: string) {
-      this.projects = this.projects.map((p) => (p.id === id ? { ...p, status } : p));
+    /** 更新项目（原地合并；表单保存/状态流转共用） */
+    updateProject(id: number, data: Partial<UrbanProject>) {
+      this.projects = this.projects.map((p) => (p.id === id ? { ...p, ...data } : p));
+    },
+
+    /** 完成对项目专家的评价（待评价 → 已完成；TODO: 后端就绪后改为接口提交） */
+    finishExpertEval(id: number) {
+      this.updateProject(id, { expertsEvaluated: true, status: '已完成' });
     },
 
     /** 删除评估项目（TODO: 后端就绪后改为接口提交） */
@@ -310,11 +385,13 @@ export const useUrbanExpertStore = defineStore('urbanExpertPool', {
       this.projects = this.projects.filter((p) => p.id !== id);
     },
 
-    /** 进入「为新增项目挑选专家」的跨模块模式（去抽取前调用，returnRoute 为挑完返回地址） */
-    beginPick(returnRoute: string) {
+    /** 进入「为新增项目挑选专家」的跨模块模式（去抽取前调用，returnRoute 为挑完返回地址，pickInfo 为带入抽取页的项目信息） */
+    beginPick(returnRoute: string, pickInfo?: { name: string; coordinator: string; implementOrg: string }) {
       this.pickMode = true;
       this.pickedExperts = [];
+      this.pickLatest = [];
       this.pickReturn = returnRoute;
+      this.pickInfo = pickInfo ? { ...pickInfo } : { name: '', coordinator: '', implementOrg: '' };
     },
 
     /** 退出挑选模式 */
@@ -325,6 +402,16 @@ export const useUrbanExpertStore = defineStore('urbanExpertPool', {
     /** 在线抽取把挑好的专家写入（名称/单位/联系方式），供新增项目回填 */
     setPickedExperts(list: PickedExpert[]) {
       this.pickedExperts = list;
+    },
+
+    /** 记录挑选模式中最近一次确认选用的专家（每次确认选用覆盖；返回时带回用） */
+    setPickLatest(list: PickedExpert[]) {
+      this.pickLatest = list;
+    },
+
+    /** 新增抽取记录（插到最前；确认选用生成） */
+    addDrawRecord(rec: DrawRecord) {
+      this.drawRecords = [rec, ...this.drawRecords];
     },
 
     /** 按条件查询专家（name/org 模糊、field 精确、selected 精确 'yes'/'no'） */
@@ -416,5 +503,6 @@ function createDefaultExpert(): UrbanExpert {
     joinDate: '',
     selected: false,
     career: '',
+    reviewExperience: '',
   };
 }

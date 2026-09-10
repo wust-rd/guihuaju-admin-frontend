@@ -46,11 +46,11 @@
           <Input v-model:value="form.dept" placeholder="请输入" :maxlength="100" />
         </div>
         <div class="flex flex-col gap-4px">
-          <span class="text-13px text-gray-600">资金来源 <span class="text-red-500">*</span></span>
+          <span class="text-13px text-gray-600">资金来源</span>
           <Input v-model:value="form.fundSource" placeholder="请输入" :maxlength="100" />
         </div>
         <div class="flex flex-col gap-4px">
-          <span class="text-13px text-gray-600">项目投资估算（亿元）<span class="text-red-500">*</span></span>
+          <span class="text-13px text-gray-600">项目投资估算（亿元）</span>
           <Input v-model:value="form.investment" placeholder="请输入" :maxlength="50" />
         </div>
         <div class="col-span-2 flex flex-col gap-4px">
@@ -151,20 +151,22 @@
     <div class="flex justify-end gap-12px">
       <a-button @click="handleCancel">取消</a-button>
       <a-button @click="handleDraft">暂存</a-button>
-      <a-button type="primary" @click="handleSubmit">提交</a-button>
+      <Popconfirm title="是否确认提交该项目？" ok-text="确定" cancel-text="取消" @confirm="handleSubmit">
+        <a-button type="primary">提交</a-button>
+      </Popconfirm>
     </div>
   </PageWrapper>
 </template>
 <script lang="ts" setup name="ViewsEarlyStageUrbanRenewalExpertProjectEvaluationForm">
-  import { computed, onActivated, reactive, ref, unref } from 'vue';
-  import { Input, Select, Upload } from 'antdv-next';
+  import { computed, reactive, ref, unref, watch } from 'vue';
+  import { Input, Popconfirm, Select, Upload } from 'antdv-next';
   import { router } from '@jeesite/core/router';
   import { PageWrapper } from '@jeesite/core/components/Page';
   import { useGo } from '@jeesite/core/hooks/web/usePage';
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
   import { dateUtil } from '@jeesite/core/utils/dateUtil';
   import type { PickedExpert, UrbanProject } from '../expert-store';
-  import { REVIEW_MODES, URBAN_DISTRICTS, useUrbanExpertStore } from '../expert-store';
+  import { REVIEW_MODES, URBAN_DISTRICTS, useUrbanExpertStore, validateProjectForSubmit } from '../expert-store';
 
   const { showMessage } = useMessage();
   const go = useGo();
@@ -181,6 +183,9 @@
   const editId = Number(query.id) || 0;
   const getTitle = computed(() => (editId ? '编辑评估项目' : '新增评估项目'));
 
+  /** 编辑模式下的原项目（新增为 undefined） */
+  const existProject = editId ? store.projects.find((p) => p.id === editId) : undefined;
+
   /** 表单（编辑时按 id 反查回填） */
   const form = reactive<Partial<UrbanProject> & { materials: string[] }>({
     name: '',
@@ -196,23 +201,20 @@
     materials: [],
   });
 
-  if (editId) {
-    const exist = store.projects.find((p) => p.id === editId);
-    if (exist) {
-      Object.assign(form, {
-        name: exist.name,
-        adminDistrict: exist.adminDistrict,
-        district: exist.district,
-        coordinator: exist.coordinator,
-        implementOrg: exist.implementOrg,
-        reviewMode: exist.reviewMode,
-        dept: exist.dept,
-        fundSource: exist.fundSource,
-        investment: exist.investment,
-        content: exist.content,
-        materials: [...exist.materials],
-      });
-    }
+  if (existProject) {
+    Object.assign(form, {
+      name: existProject.name,
+      adminDistrict: existProject.adminDistrict,
+      district: existProject.district,
+      coordinator: existProject.coordinator,
+      implementOrg: existProject.implementOrg,
+      reviewMode: existProject.reviewMode,
+      dept: existProject.dept,
+      fundSource: existProject.fundSource,
+      investment: existProject.investment,
+      content: existProject.content,
+      materials: [...existProject.materials],
+    });
   }
 
   /** 参与专家行（3~7 人） */
@@ -229,6 +231,17 @@
     );
   }
   seedRows();
+
+  // 编辑时回填参与专家（名称 + 自动带出单位/联系方式）+ 组长
+  if (existProject?.experts?.length) {
+    const next: ExpertRow[] = existProject.experts.slice(0, 7).map((name) => {
+      const e = store.experts.find((x) => x.name === name);
+      return { name, org: e?.org || '', phone: e?.phone || '' };
+    });
+    while (next.length < 3) next.push({ name: '', org: '', phone: '' });
+    rows.splice(0, rows.length, ...next.slice(0, 7));
+    leader.value = existProject.leader || '';
+  }
 
   /** 专家名称自动补全选项（取个人档案模块专家库） */
   /** 专家名称下拉选项（只能从个人档案专家库里选） */
@@ -263,19 +276,40 @@
     rows.splice(0, rows.length, ...next.slice(0, 7));
   }
 
-  /** 去抽取：进入挑选模式，跳在线抽取模块 */
+  /** 去抽取：需先填项目名称/统筹主体/实施主体，再把这三项带入在线抽取页 */
   function goPick() {
-    store.beginPick(`${FORM_ROUTE}${editId ? `?id=${editId}` : ''}`);
+    if (!form.name?.trim()) {
+      showMessage('请先填写项目名称');
+      return;
+    }
+    if (!form.coordinator?.trim()) {
+      showMessage('请先填写统筹主体');
+      return;
+    }
+    if (!form.implementOrg?.trim()) {
+      showMessage('请先填写实施主体');
+      return;
+    }
+    store.beginPick(`${FORM_ROUTE}${editId ? `?id=${editId}` : ''}`, {
+      name: form.name,
+      coordinator: form.coordinator,
+      implementOrg: form.implementOrg,
+    });
     go(ONLINE_DRAW_ROUTE);
   }
 
-  /** 从在线抽取回来：若处于挑选模式，回填参与专家 */
-  onActivated(() => {
-    if (store.pickMode && store.pickedExperts.length) {
-      fillPicked(store.pickedExperts);
-      store.endPick();
-    }
-  });
+  /** 在线抽取「返回」带回专家（pickedExperts 变化 / 页面挂载时已有数据）：回填参与专家、清空带回数据并退出挑选模式 */
+  watch(
+    () => store.pickedExperts,
+    (list) => {
+      if (list.length) {
+        fillPicked(list);
+        store.endPick();
+        store.setPickedExperts([]);
+      }
+    },
+    { immediate: true },
+  );
 
   /** 上传：只把文件名加入材料列表 */
   function handleBeforeUpload(file: File) {
@@ -286,54 +320,33 @@
     form.materials.splice(index, 1);
   }
 
-  /** 校验必填项（提交时全量，暂存只要求名称与参与专家） */
+  /** 提交前校验：除资金来源/项目投资估算外都必填（与列表提交共用同一规则） */
   function validateRequired(): boolean {
-    const required = [
-      [form.name, '请输入项目名称'],
-      [form.adminDistrict, '请选择行政区'],
-      [form.district, '请输入片区名称'],
-      [form.coordinator, '请输入统筹主体'],
-      [form.implementOrg, '请输入实施主体'],
-      [form.reviewMode, '请选择评估模式'],
-      [form.dept, '请输入责任部门'],
-      [form.fundSource, '请输入资金来源'],
-      [form.investment, '请输入项目投资估算'],
-      [form.content, '请输入主要项目内容'],
-    ] as const;
-    for (const [val, msg] of required) {
-      if (!val) {
-        showMessage(msg);
-        return false;
-      }
-    }
-    if (form.materials.length === 0) {
-      showMessage('请上传评估材料');
-      return false;
-    }
-    const filled = rows.filter((r) => r.name);
-    if (filled.length < 3) {
-      showMessage('请至少选择 3 名参与专家');
-      return false;
-    }
-    if (!leader.value) {
-      showMessage('请选择组长');
+    const missing = validateProjectForSubmit({
+      ...form,
+      experts: rows.filter((r) => r.name).map((r) => r.name),
+      leader: leader.value,
+    } as Partial<UrbanProject>);
+    if (missing.length) {
+      showMessage(`请先填写：${missing.join('、')}`);
       return false;
     }
     return true;
   }
 
-  /** 保存（create: 新增；edit: 更新），status 按动作传入 */
+  /** 保存（create: 新增；edit: 更新全部字段），status 按动作传入 */
   function save(submit: boolean) {
     const status = submit ? '评估中' : '待提交';
     const experts = rows.filter((r) => r.name).map((r) => r.name);
     if (editId) {
-      store.updateProjectStatus(editId, status);
+      store.updateProject(editId, { ...form, experts, leader: leader.value, status } as Partial<UrbanProject>);
       showMessage(`保存成功（${submit ? '已提交' : '已暂存'}，本地演示，未持久化）`);
     } else {
       store.addProject({
         ...form,
         status,
         experts,
+        leader: leader.value,
         startDate: dateUtil().format('YYYY-MM-DD'),
       } as Partial<UrbanProject>);
       showMessage(`新增成功（${submit ? '已提交' : '已暂存'}，本地演示，未持久化）`);
@@ -345,13 +358,9 @@
     go(LIST_ROUTE);
   }
   function handleDraft() {
+    // 暂存宽松：只需项目名称，其余可后续补填
     if (!form.name) {
       showMessage('请输入项目名称');
-      return;
-    }
-    const filled = rows.filter((r) => r.name);
-    if (filled.length < 3) {
-      showMessage('请至少选择 3 名参与专家');
       return;
     }
     save(false);

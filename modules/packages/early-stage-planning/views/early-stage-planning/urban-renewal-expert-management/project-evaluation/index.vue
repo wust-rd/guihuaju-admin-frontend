@@ -4,7 +4,7 @@
   项目评估列表（对齐设计稿）：顶部搜索表单（项目名称/片区名称/评审模式）+ 右侧「新增项目」，
   下方 BasicTable（项目名称/片区名称/实施主体/统筹主体/责任部门/评审模式/参与专家/开始时间/状态/操作）。
   操作按状态区分：评估中→查看·评估；待提交→查看·编辑·提交·删除；已完成→查看·生成评估报告。
-  「新增项目/编辑」跳独立表单页（form.vue，含评估材料上传 + 参与专家 + 去抽取，底部取消/暂存/提交）。
+  「查看」跳二级详情页（_id/list）；「新增项目/编辑」跳独立表单页（form.vue，含评估材料上传 + 参与专家 + 去抽取，底部取消/暂存/提交）。
   数据来自本模块共享 store，接口就绪后替换。
 -->
 <template>
@@ -25,71 +25,34 @@
         <Tag :color="STATUS_COLOR[record.status as string] || 'default'">{{ record.status }}</Tag>
       </template>
     </BasicTable>
-
-    <!-- 项目评估详情 Modal -->
-    <Modal
-      v-model:open="detailModal.open"
-      :title="`项目详情 - ${detailModal.project?.name ?? ''}`"
-      width="720px"
-      centered
-      :footer="null"
-    >
-      <div v-if="detailModal.project" class="mt-8px grid grid-cols-3 gap-x-16px gap-y-12px text-14px">
-        <div class="min-w-0">
-          <div class="text-12px text-gray-400">片区名称</div>
-          <div class="mt-2px text-gray-700">{{ detailModal.project.district }}</div>
-        </div>
-        <div class="min-w-0">
-          <div class="text-12px text-gray-400">评审模式</div>
-          <div class="mt-2px text-gray-700">{{ detailModal.project.reviewMode }}</div>
-        </div>
-        <div class="min-w-0">
-          <div class="text-12px text-gray-400">开始时间</div>
-          <div class="mt-2px text-gray-700">{{ detailModal.project.startDate }}</div>
-        </div>
-        <div class="min-w-0">
-          <div class="text-12px text-gray-400">实施主体</div>
-          <div class="mt-2px text-gray-700">{{ detailModal.project.implementOrg }}</div>
-        </div>
-        <div class="min-w-0">
-          <div class="text-12px text-gray-400">统筹主体</div>
-          <div class="mt-2px text-gray-700">{{ detailModal.project.coordinator }}</div>
-        </div>
-        <div class="min-w-0">
-          <div class="text-12px text-gray-400">责任部门</div>
-          <div class="mt-2px text-gray-700">{{ detailModal.project.dept }}</div>
-        </div>
-        <div class="col-span-3 min-w-0">
-          <div class="text-12px text-gray-400">参与专家</div>
-          <div class="mt-2px text-gray-700">{{ detailModal.project.experts.join('、') }}</div>
-        </div>
-      </div>
-    </Modal>
   </PageWrapper>
 </template>
 <script lang="ts" setup name="ViewsEarlyStageUrbanRenewalExpertProjectEvaluation">
   import { reactive } from 'vue';
-  import { Modal, Select, Tag } from 'antdv-next';
+  import { Select, Tag } from 'antdv-next';
   import { PageWrapper } from '@jeesite/core/components/Page';
   import { BasicTable, BasicColumn, useTable } from '@jeesite/core/components/Table';
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
   import { useGo } from '@jeesite/core/hooks/web/usePage';
   import type { UrbanProject } from '../expert-store';
-  import { REVIEW_MODES, URBAN_DISTRICTS, useUrbanExpertStore } from '../expert-store';
+  import { REVIEW_MODES, URBAN_DISTRICTS, useUrbanExpertStore, validateProjectForSubmit } from '../expert-store';
 
   const { showMessage } = useMessage();
   const go = useGo();
   const store = useUrbanExpertStore();
 
   const FORM_ROUTE = '/early-stage-planning/urban-renewal-expert-management/project-evaluation/form';
+  const DETAIL_ROUTE = '/early-stage-planning/urban-renewal-expert-management/project-evaluation';
+  const EVAL_ROUTE = '/early-stage-planning/urban-renewal-expert-management/project-evaluation/evaluate';
 
   const DISTRICT_OPTIONS = URBAN_DISTRICTS.map((d) => ({ label: d, value: d }));
   const MODE_OPTIONS = REVIEW_MODES.map((m) => ({ label: m, value: m }));
 
-  /** 状态颜色（评估中=蓝 处理中，待提交=橙 警告，已完成=绿 成功） */
+  /** 状态颜色（待提交=橙，评估中=蓝，待评价=紫，已完成=绿） */
   const STATUS_COLOR: Record<string, string> = {
-    评估中: 'processing',
     待提交: 'warning',
+    评估中: 'processing',
+    待评价: 'purple',
     已完成: 'success',
   };
 
@@ -110,12 +73,20 @@
   const actionColumn: BasicColumn = {
     width: 210,
     actions: (record: Recordable) => {
-      const list: any[] = [{ label: '查看', onClick: () => openDetail(record) }];
+      const list: any[] = [{ label: '查看', onClick: () => go(`${DETAIL_ROUTE}/${record.code}`) }];
       if (record.status === '评估中') {
         list.push({ label: '评估', onClick: () => handleEvaluate(record) });
+      } else if (record.status === '待评价') {
+        list.push({
+          label: '评价专家',
+          onClick: () => handleExpertEval(record),
+        });
       } else if (record.status === '待提交') {
         list.push({ label: '编辑', onClick: () => go(`${FORM_ROUTE}?id=${record.id}`) });
-        list.push({ label: '提交', onClick: () => handleSubmit(record) });
+        list.push({
+          label: '提交',
+          popConfirm: { title: '是否确认提交该项目？', confirm: () => handleSubmit(record) },
+        });
         list.push({
           label: '删除',
           color: 'error',
@@ -186,23 +157,25 @@
     setTableData(filterProjects(searchKeyword));
   }
 
-  /** 详情 Modal */
-  const detailModal = reactive({
-    open: false,
-    project: null as UrbanProject | null,
-  });
-  function openDetail(record: Recordable) {
-    detailModal.project = record as unknown as UrbanProject;
-    detailModal.open = true;
+  /** 评价专家：跳专家评价页（携带项目编码，对本项目参与专家打分；完成后项目 → 已完成） */
+  function handleExpertEval(record: Recordable) {
+    go(
+      `/early-stage-planning/urban-renewal-expert-management/expert-evaluation/index?projectCode=${record.code}&projectName=${encodeURIComponent(record.name)}`,
+    );
   }
 
-  /** 评估（TODO: 接入评估流程） */
+  /** 去评估：跳评估页面（展示项目信息 + 评估结果/意见/附件） */
   function handleEvaluate(record: Recordable) {
-    showMessage(`${record.name}：评估流程待接入`);
+    go(`${EVAL_ROUTE}?id=${record.code}`);
   }
-  /** 提交（待提交 → 评估中） */
+  /** 提交（待提交 → 评估中）：与表单提交相同的校验，缺项则阻止并提示 */
   function handleSubmit(record: Recordable) {
-    store.updateProjectStatus(record.id, '评估中');
+    const missing = validateProjectForSubmit(record as Partial<UrbanProject>);
+    if (missing.length) {
+      showMessage(`该项目缺少：${missing.join('、')}，请先编辑补充`);
+      return;
+    }
+    store.updateProject(record.id, { status: '评估中' });
     refreshTable();
     showMessage('提交成功（本地演示，未持久化）');
   }

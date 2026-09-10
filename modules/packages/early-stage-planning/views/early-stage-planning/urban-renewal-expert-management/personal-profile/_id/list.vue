@@ -90,6 +90,12 @@
         <p class="mt-12px whitespace-pre-wrap text-14px leading-26px text-gray-700">{{ expert.career || '—' }}</p>
       </div>
 
+      <!-- 过往评审经历 -->
+      <div class="bg-white rd-12px b-1 b-solid b-gray-100 p-24px shadow-sm">
+        <div class="text-16px font-600 text-gray-800">过往评审经历</div>
+        <p class="mt-12px whitespace-pre-wrap text-14px leading-26px text-gray-700">{{ expert.reviewExperience || '—' }}</p>
+      </div>
+
       <!-- 预留扩展区：后续可在此追加 参与项目 / 评价记录 等内容 -->
       <div
         class="flex min-h-160px items-center justify-center rd-12px b-1 b-dashed b-gray-200 bg-gray-50 text-14px text-gray-400"

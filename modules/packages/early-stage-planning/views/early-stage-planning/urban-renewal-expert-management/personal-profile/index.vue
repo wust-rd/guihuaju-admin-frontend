@@ -80,6 +80,10 @@
           <span class="text-13px text-gray-600">主要经历</span>
           <Input.TextArea v-model:value="formModal.form.career" :rows="3" placeholder="请输入主要经历" />
         </div>
+        <div class="col-span-2 flex flex-col gap-4px">
+          <span class="text-13px text-gray-600">过往评审经历</span>
+          <Input.TextArea v-model:value="formModal.form.reviewExperience" :rows="3" placeholder="请输入过往评审经历" />
+        </div>
       </div>
     </Modal>
   </PageWrapper>

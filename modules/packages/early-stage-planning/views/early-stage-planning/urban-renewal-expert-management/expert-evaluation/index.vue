@@ -7,6 +7,26 @@
 -->
 <template>
   <PageWrapper contentClass="flex flex-col gap-16px">
+    <!-- 项目上下文头：项目名 + 返回；全部参与专家评完后可「完成评价」（待评价 → 已完成） -->
+    <div v-if="projectCode" class="flex items-center gap-12px shrink-0">
+      <a-button @click="go('/early-stage-planning/urban-renewal-expert-management/project-evaluation/index')">
+        <span class="inline-flex items-center gap-4px">
+          <span class="i-ant-design:arrow-left-outlined"></span> 返回
+        </span>
+      </a-button>
+      <span class="text-16px font-500 text-gray-800">评价专家</span>
+      <span v-if="projectName" class="text-14px text-gray-500">- {{ projectName }}</span>
+      <a-button
+        type="primary"
+        class="ml-auto"
+        :disabled="!allExpertsRated"
+        :title="allExpertsRated ? '' : '所有参与专家评价完成后才能完成'"
+        @click="finishProjectEval"
+      >
+        完成评价
+      </a-button>
+    </div>
+
     <!-- 三张排名卡 -->
     <div class="grid grid-cols-3 gap-16px">
       <div
@@ -107,15 +127,30 @@
 <script lang="ts" setup name="ViewsEarlyStageUrbanRenewalExpertEvaluation">
   import { computed, reactive } from 'vue';
   import { Input, Modal, Rate } from 'antdv-next';
+  import { useGo } from '@jeesite/core/hooks/web/usePage';
   import { PageWrapper } from '@jeesite/core/components/Page';
   import { BasicTable, BasicColumn, useTable } from '@jeesite/core/components/Table';
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
   import { dateUtil } from '@jeesite/core/utils/dateUtil';
+  import { useRoute } from 'vue-router';
   import type { UrbanExpert } from '../expert-store';
   import { useUrbanExpertStore } from '../expert-store';
 
   const { showMessage } = useMessage();
   const store = useUrbanExpertStore();
+  const route = useRoute();
+  const go = useGo();
+
+  // ---- 项目上下文模式：从项目评估列表「评价专家」进入（query 携带 projectCode/projectName） ----
+  /** 本页为独立考评页（无 projectCode）或某项目的专家评价页 */
+  const projectCode = computed(() => String(route.query.projectCode ?? ''));
+  const projectName = computed(() => String(route.query.projectName ?? ''));
+  /** 项目上下文下的参与专家名单（按 code 反查项目） */
+  const projectOfRoute = computed(() => store.projects.find((p) => p.code === projectCode.value));
+  /** 项目上下文下仅展示该项目的参与专家 */
+  const scopeExperts = computed(() =>
+    projectOfRoute.value ? projectOfRoute.value.experts : null,
+  );
 
   /** 打分维度定义 */
   const RATE_DIMENSIONS = [
@@ -125,10 +160,10 @@
   ] as const;
   type RateDimensionKey = (typeof RATE_DIMENSIONS)[number]['key'];
 
-  /** 专家列表行 = 基础信息 + 三维度平均分 + 评价次数（仅展示已入选专家） */
+  /** 专家列表行 = 基础信息 + 三维度平均分 + 评价次数（独立模式仅已入选专家；项目模式为该项目参与专家） */
   const expertRows = computed(() =>
     store.experts
-      .filter((e) => e.selected)
+      .filter((e) => (scopeExperts.value ? scopeExperts.value.includes(e.name) : e.selected))
       .map((e) => {
         const avg = store.avgScoreOf(e.id);
         return {
@@ -262,6 +297,26 @@
   function refreshTable() {
     setTableData(expertRows.value);
   }
+
+  // ---- 项目上下文：完成条件与完成操作 ----
+  /** 参与专家是否全部已有评价记录 */
+  const allExpertsRated = computed(
+    () =>
+      !!scopeExperts.value &&
+      scopeExperts.value.every((name) => {
+        const e = store.experts.find((x) => x.name === name);
+        return !!e && store.avgScoreOf(e.id).count > 0;
+      }),
+  );
+
+  /** 完成评价：项目 待评价 → 已完成，返回项目列表 */
+  function finishProjectEval() {
+    if (!projectOfRoute.value) return;
+    store.finishExpertEval(projectOfRoute.value.id);
+    showMessage('专家评价完成，项目已完成');
+    go('/early-stage-planning/urban-renewal-expert-management/project-evaluation/index');
+  }
+
 
   /** 历史评价 Modal */
   const historyModal = reactive({

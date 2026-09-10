@@ -9,9 +9,19 @@
 -->
 <template>
   <PageWrapper contentClass="flex flex-col gap-16px p-16px">
-    <!-- 挑选模式提示：从新增项目「去抽取」进入 -->
-    <div v-if="store.pickMode" class="rd-8px bg-[#EAF3FF] px-16px py-10px text-13px text-[#1C6BC2]">
-      当前为新增项目挑选参与专家：抽取并「确认选用」后，会自动把所选专家带回新增项目表单。
+    <!-- 挑选模式提示：从新增项目「去抽取」进入；右上角「返回」带回中间专家卡片 -->
+    <div
+      v-if="store.pickMode"
+      class="flex items-center gap-12px rd-8px bg-[#EAF3FF] px-16px py-10px text-13px text-[#1C6BC2]"
+    >
+      <span class="flex-1"
+        >当前为新增项目挑选参与专家：每次「确认选用」生成一条抽取记录；点右上角「返回」把最近一次确认选用的专家带回新增项目表单（从未确认选用则不带回）。</span
+      >
+      <a-button size="small" type="primary" @click="handleBack">
+        <span class="inline-flex items-center gap-4px">
+          <span class="i-ant-design:arrow-left-outlined"></span> 返回
+        </span>
+      </a-button>
     </div>
     <!-- 抽取器 -->
     <div class="rd-10px p-16px" style="background-color: rgba(15, 23, 42, 0.02)">
@@ -292,6 +302,14 @@
                   <div class="text-14px text-gray-400">主要经历</div>
                   <div class="mt-4px whitespace-pre-wrap text-15px leading-24px text-gray-700">{{ expert.career }}</div>
                 </div>
+
+                <!-- 过往评审经历 -->
+                <div class="mt-10px border-t border-gray-100 pt-8px">
+                  <div class="text-14px text-gray-400">过往评审经历</div>
+                  <div class="mt-4px whitespace-pre-wrap text-15px leading-24px text-gray-700">{{
+                    expert.reviewExperience
+                  }}</div>
+                </div>
               </div>
             </Tabs.TabPane>
           </Tabs>
@@ -435,19 +453,26 @@
             expertModal.expert.career
           }}</div>
         </div>
+
+        <div class="border-t border-gray-100 pt-10px">
+          <div class="text-12px text-gray-400">过往评审经历</div>
+          <div class="mt-6px whitespace-pre-wrap text-13px leading-22px text-gray-700">{{
+            expertModal.expert.reviewExperience
+          }}</div>
+        </div>
       </div>
     </Modal>
   </PageWrapper>
 </template>
 <script lang="ts" setup name="ViewsEarlyStageUrbanRenewalExpertOnlineDraw">
-  import { computed, reactive, ref } from 'vue';
+  import { computed, reactive, ref, watch } from 'vue';
   import { Input, InputNumber, message, Modal, Select, Tabs } from 'antdv-next';
   import { PageWrapper } from '@jeesite/core/components/Page';
   import { BasicTable, BasicColumn, useTable } from '@jeesite/core/components/Table';
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
   import { useGo } from '@jeesite/core/hooks/web/usePage';
   import { dateUtil } from '@jeesite/core/utils/dateUtil';
-  import type { UrbanExpert } from '../expert-store';
+  import type { DrawRecord, UrbanExpert } from '../expert-store';
   import { URBAN_FIELDS, useUrbanExpertStore } from '../expert-store';
 
   const { showMessage } = useMessage();
@@ -465,23 +490,22 @@
     count: 3,
   });
 
+  /** 挑选模式开启时，自动带入新增项目表单的项目名称/实施主体/统筹主体（watch+immediate，组件挂载前/后都能生效） */
+  watch(
+    () => store.pickMode,
+    (v) => {
+      if (v) {
+        query.name = store.pickInfo.name;
+        query.implementOrg = store.pickInfo.implementOrg;
+        query.coordinator = store.pickInfo.coordinator;
+      }
+    },
+    { immediate: true },
+  );
+
   /** 抽取结果 */
   const results = ref<UrbanExpert[]>([]);
   const drawing = ref(false);
-
-  /** 抽取记录 */
-  type DrawRecord = {
-    id: number;
-    time: string;
-    name: string;
-    implementOrg: string;
-    coordinator: string;
-    fields: string[];
-    fieldsText: string;
-    count: number;
-    experts: UrbanExpert[];
-  };
-  const records = ref<DrawRecord[]>([]);
 
   /** 专家1~专家7 列（不足数量显示 -） */
   const expertColumns: BasicColumn[] = Array.from({ length: 7 }, (_, i) => ({
@@ -504,7 +528,7 @@
   ];
 
   const [registerTable, { setTableData }] = useTable({
-    dataSource: records.value,
+    dataSource: store.drawRecords,
     columns: recordColumns,
     showTableSetting: false,
     showIndexColumn: false,
@@ -631,7 +655,7 @@
   /** 生成一条抽取记录（确认选用时） */
   function appendRecord() {
     const rec: DrawRecord = {
-      id: records.value.reduce((max, r) => Math.max(max, r.id), 0) + 1,
+      id: store.drawRecords.reduce((max, r) => Math.max(max, r.id), 0) + 1,
       time: dateUtil().format('YYYY-MM-DD'),
       name: query.name.trim(),
       implementOrg: query.implementOrg.trim(),
@@ -641,27 +665,34 @@
       count: results.value.length,
       experts: [...results.value],
     };
-    records.value = [rec, ...records.value];
-    setTableData(records.value);
+    store.addDrawRecord(rec);
+    setTableData(store.drawRecords);
   }
 
-  /** 确认选用：挑选模式→带回新增项目；普通模式→生成抽取记录并标记为「已入选」 */
+  /** 确认选用：任何进入方式都生成一条抽取记录；专家卡片不清空；挑选模式不自动跳回 */
   function handleConfirm() {
     if (results.value.length === 0) {
       showMessage('请先抽取');
       return;
     }
+    appendRecord();
     if (store.pickMode) {
-      store.setPickedExperts(results.value.map((e) => ({ name: e.name, org: e.org, phone: e.phone })));
-      const back = store.pickReturn || '/early-stage-planning/urban-renewal-expert-management/project-evaluation/index';
-      store.endPick();
-      go(back);
+      store.setPickLatest(results.value.map((e) => ({ name: e.name, org: e.org, phone: e.phone })));
+      showMessage(`已生成抽取记录（${results.value.length} 名专家），点右上角「返回」带回最新一次的专家`);
       return;
     }
-    appendRecord();
     store.markSelected(results.value.map((e) => e.id));
-    showMessage(`已确认选用 ${results.value.length} 名专家（本地演示，未持久化）`);
-    results.value = [];
+    showMessage(`已确认选用 ${results.value.length} 名专家，已生成抽取记录（本地演示，未持久化）`);
+  }
+
+  /** 挑选模式「返回」：带回最近一次确认选用（最新一条记录）的专家；从未确认选用则不带回 */
+  function handleBack() {
+    if (store.pickLatest.length > 0) {
+      store.setPickedExperts(store.pickLatest);
+    }
+    const back = store.pickReturn || '/early-stage-planning/urban-renewal-expert-management/project-evaluation/index';
+    store.endPick();
+    go(back);
   }
 
   /** 重置 */
