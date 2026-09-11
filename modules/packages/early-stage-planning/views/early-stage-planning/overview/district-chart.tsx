@@ -2,89 +2,77 @@ import { useECharts } from '@jeesite/core/hooks/web/useECharts';
 import { DoubleRing } from '@jeesite/display/components/double-ring';
 import { StatCard } from '@jeesite/display/components/stat-card';
 import { Tooltip } from 'antdv-next';
-import type { Ref } from 'vue';
-import { defineComponent, onMounted, shallowRef } from 'vue';
-
-/** 行政区划分布图表数据（静态占位，接入接口后替换） */
-const DISTRICT_X_AXIS = ['江岸', '江汉', '硚口', '汉阳', '武昌', '青山', '洪山', '东西湖', '汉南', '蔡甸', '江夏', '黄陂', '新洲'];
-/** 投资额（亿元）：与 13 个区一一对应 */
-const DISTRICT_INVEST = [35, 62, 45, 78, 52, 90, 68, 55, 40, 72, 58, 83, 47];
-/** 柱高上限 */
-const Y_MAX = 100;
+import type { PropType, Ref } from 'vue';
+import { defineComponent, shallowRef, watch } from 'vue';
 
 /**
  * DistrictChart —— 片区行政区划分布：荧光分段柱状图 + 值分隔格纹层
  *
+ * 16 个区划（写法归并后）全量渲染、无滑动；区名去掉「区」字后竖排（rotate 90）；
  * 三色渐变柱（浅蓝 → 青 → 金黄，从下往上）+ 横向细分隔条叠加在柱上。
- * echarts 实例与数据内部管理（静态占位）。
+ * 数据来自 area-data.districtInvest（geojson 按 DIST 聚合 INV_BIL，随批次下拉联动传入）。
+ *
+ * props：
+ * - rows: { name, value }[]（区划 → 投资额亿元）；为空时渲染空轴
  */
 export const DistrictChart = defineComponent({
   name: 'DistrictChart',
-  setup() {
+
+  props: {
+    rows: { type: Array as PropType<{ name: string; value: number }[]>, default: () => [] },
+  },
+
+  setup(props) {
     const chartRef = shallowRef<HTMLDivElement | null>(null);
     const { setOptions } = useECharts(chartRef as Ref<HTMLDivElement>);
 
-    onMounted(() => {
+    function render(rows: { name: string; value: number }[]) {
+      const names = rows.map((r) => r.name);
+      const values = rows.map((r) => r.value);
+      // 柱高上限取最大值向上取整到 50 的倍数，柱子留出头顶空间
+      const yMax = Math.max(Math.ceil(Math.max(...values, 1) / 50) * 50, 50);
+
       setOptions({
-        grid: {
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-        },
+        grid: { top: 8, left: 0, right: 0, bottom: 78 },
         xAxis: {
           type: 'category',
-          data: DISTRICT_X_AXIS,
+          data: names,
+          // 区名去掉「区」字后逐字竖排（每字一行，字身保持正立）；悬停 tooltip 仍显示完整区名
           axisLabel: {
             color: '#A2B0B8',
-            fontSize: 12,
+            fontSize: 11,
             interval: 0,
             margin: 10,
-          },
-          axisLine: {
-            lineStyle: {
-              color: 'rgba(255, 255, 255, 0.4)',
+            formatter: (name: string) => {
+              const short = name.endsWith('区') ? name.slice(0, -1) : name;
+              return short.split('').join('\n');
             },
           },
+          axisLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.4)' } },
           axisTick: {
             alignWithLabel: true,
-            lineStyle: {
-              color: 'rgba(255, 255, 255, 0.4)',
-              width: 2,
-            },
+            lineStyle: { color: 'rgba(255, 255, 255, 0.4)', width: 2 },
             show: true,
           },
         },
         yAxis: {
           type: 'value',
           min: 0,
-          max: Y_MAX,
+          max: yMax,
           show: true,
           axisLine: { show: false },
-          splitLine: {
-            lineStyle: {
-              color: 'rgba(31, 180, 255, 0.12)',
-              type: 'solid',
-              width: 1,
-            },
-          },
+          splitLine: { lineStyle: { color: 'rgba(31, 180, 255, 0.12)', type: 'solid', width: 1 } },
           axisLabel: { color: '#A2B0B8' },
-          nameTextStyle: {
-            color: '#A2B0B8',
-            align: 'center',
-            padding: [0, 10, 0, 0],
-            fontSize: 12,
-          },
         },
         series: [
           // 【渐变柱】从下往上：浅蓝 → 青 → 金黄（y 从 1 到 0，offset 0 在底部）
           {
             name: '投资额',
             type: 'bar',
-            barWidth: 12,
+            barWidth: 14,
             z: 10,
             zlevel: 2,
-            data: DISTRICT_INVEST,
+            data: values,
             itemStyle: {
               color: {
                 type: 'linear',
@@ -98,7 +86,6 @@ export const DistrictChart = defineComponent({
                   { offset: 1, color: '#cbfe3a' }, // 金黄（顶）
                 ],
               },
-              // 荧光光晕
               shadowBlur: 12,
               shadowColor: 'rgba(0, 207, 255, 0.5)',
               borderRadius: [0, 0, 0, 0],
@@ -112,20 +99,21 @@ export const DistrictChart = defineComponent({
             symbolMargin: 3,
             symbolSize: [18, 3],
             symbolClip: false,
-            data: DISTRICT_INVEST,
+            data: values,
             z: 0,
             zlevel: 3,
-            itemStyle: {
-              color: '#354D6B',
-            },
+            itemStyle: { color: '#354D6B' },
           },
         ],
-        tooltip: {
-          trigger: 'axis',
-          formatter: '{b}<br/>投资额：{c0}亿元',
-        },
+        tooltip: { trigger: 'axis', formatter: '{b}<br/>投资额：{c0}亿元' },
       });
-    });
+    }
+
+    watch(
+      () => props.rows,
+      (rows) => render(rows),
+      { immediate: true },
+    );
 
     return () => (
       <StatCard class="mt-24px">
@@ -140,7 +128,7 @@ export const DistrictChart = defineComponent({
           </Tooltip>
         </div>
 
-        <div ref={chartRef} class="mt-24px w-full h-180px" id="chart"></div>
+        <div ref={chartRef} class="mt-16px w-full h-250px" id="chart"></div>
       </StatCard>
     );
   },

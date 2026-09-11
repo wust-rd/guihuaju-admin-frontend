@@ -84,9 +84,7 @@ export const RegionTabs = defineComponent({
                       animate={{ x: active ? -16 : 0 }}
                       transition={{ duration: ICON_MOVE_DURATION, ease: 'easeOut' }}
                     >
-                      <div
-                        class={cn(tab.icon, 'size-20px transition-all', active ? 'text-white' : 'text-gray-500')}
-                      />
+                      <div class={cn(tab.icon, 'size-20px transition-all', active ? 'text-white' : 'text-gray-500')} />
                       <AnimatePresence>
                         {active && (
                           <motion.div
@@ -113,9 +111,7 @@ export const RegionTabs = defineComponent({
                   data-glow-tab-key={tab.key}
                   class="shrink-0 px-12px flex-1 h-42px rd-10px flex items-center justify-center gap-8px select-none cursor-pointer"
                 >
-                  <div
-                    class={cn(tab.icon, 'size-20px transition-colors', active ? 'text-white' : 'text-gray-500')}
-                  />
+                  <div class={cn(tab.icon, 'size-20px transition-colors', active ? 'text-white' : 'text-gray-500')} />
                   <div class={cn('text-16px transition-colors', active ? 'text-white' : 'text-gray-500')}>
                     {tab.label}
                   </div>
