@@ -34,30 +34,35 @@
           <Select v-model:value="year" :options="yearOptions" class="ml-2 w-28" @change="handleFilterChange" />
           <span class="ml-6 text-gray-500">填报季度</span>
           <Select v-model:value="quarter" :options="QUARTER_OPTIONS" class="ml-2 w-28" @change="handleFilterChange" />
-          <span class="ml-6 text-gray-500">项目报送单位</span>
-          <Select
-            v-model:value="reportUnit"
-            :options="reportUnitOptions"
-            placeholder="请选择"
-            class="ml-2 w-32"
-            @change="handleFilterChange"
-          />
+          <template v-if="reportUnitOptions.length > 1">
+            <span class="ml-6 text-gray-500">项目报送单位</span>
+            <Select
+              v-model:value="reportUnit"
+              :options="reportUnitOptions"
+              placeholder="请选择"
+              show-search
+              option-filter-prop="label"
+              class="ml-2 w-52"
+              @change="handleFilterChange"
+            />
+            <span v-if="!unitEditable" class="ml-2 text-orange-500">只读查看</span>
+          </template>
         </div>
         <div class="flex items-center">
-          <a-button v-if="!isOverview" @click="handleAddProject"> 新增项目 </a-button>
+          <a-button type="primary" v-if="!isOverview && unitEditable" @click="handleAddProject">
+            <Icon icon="i-fluent:add-12-filled" /> 新增
+          </a-button>
           <a-button class="ml-2" :loading="exporting" @click="handleExport"> 导出 </a-button>
-          <a-button type="primary" class="ml-2" :loading="saving" @click="handleSave"> 保存 </a-button>
+          <a-button v-if="unitEditable" type="primary" class="ml-2" :loading="saving" @click="handleSave">
+            保存
+          </a-button>
         </div>
       </div>
     </Card>
 
     <Card :title="tableCardTitle">
       <template #extra>
-        <Tooltip v-if="!isOverview" :title="bringInTooltip">
-          <a-button size="small" :disabled="broughtIn || loading" @click="handleBringIn">
-            代入上一季度填写的项目列
-          </a-button>
-        </Tooltip>
+        <a-button v-if="unitEditable" :disabled="loading" @click="handleBringIn"> 带入上一季度填写的项目列 </a-button>
       </template>
       <RadioGroup
         v-model:value="activeCategory"
@@ -100,6 +105,21 @@
       </div>
     </Modal>
 
+    <Modal v-model:open="bringModalOpen" title="带入上一季度填写的项目列" centered :footer="null" width="600">
+      <div class="pt-2 text-gray-600">
+        为方便用户填写，系统设计了带入上一季度填写的项目列功能，用户可直接在同名项目列上更新数据。
+      </div>
+      <div class="mt-12 flex items-end justify-between gap-3">
+        <a-button type="primary" danger :disabled="bringing" @click="handleForceBringIn"> 强制带入，覆盖数据 </a-button>
+        <div class="flex flex-col gap-2">
+          <a-button :disabled="bringing" @click="doBringIn('names')"> 仅带入项目名称，值由我自己填写 </a-button>
+          <a-button type="primary" :loading="bringing" @click="doBringIn('normal')">
+            带入上一季度填写的项目列
+          </a-button>
+        </div>
+      </div>
+    </Modal>
+
     <Modal v-model:open="totalModalOpen" :title="totalModalTitle" centered @ok="handleTotalConfirm">
       <div class="pt-2">
         <span class="text-gray-500">合计值（个）</span>
@@ -119,7 +139,7 @@
 </template>
 <script lang="ts" setup name="ViewsIfcoProgressFillList">
   import { computed, h, nextTick, onMounted, reactive, ref, watch } from 'vue';
-  import { Card, Input, InputNumber, Modal, Popconfirm, RadioGroup, Select, Table, Tooltip } from 'antdv-next';
+  import { Card, Input, InputNumber, Modal, Popconfirm, RadioGroup, Select, Switch, Table, Tooltip } from 'antdv-next';
   import type { TableColumnsType } from 'antdv-next';
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
   import { Icon } from '@jeesite/core/components/Icon';
@@ -185,6 +205,8 @@
   /** 项目报送单位(存单位编码;切换即切换数据集;默认第一个有权限的单位) */
   const reportUnit = ref<string>();
   const reportUnitOptions = computed(() => UNITS.map((unit) => ({ label: unit.name, value: unit.code })));
+  /** 当前所选单位是否可填报(false=主管单位只读查看其他单位,隐藏全部写入口) */
+  const unitEditable = computed(() => UNITS.find((unit) => unit.code === reportUnit.value)?.editable !== false);
 
   // ── 类目选择:一级 + 嵌套二级 ────────────────────────────────────────
   const categoryOptions = computed(() => CATEGORIES.map((cat) => ({ label: cat.label, value: cat.key })));
@@ -252,15 +274,32 @@
     editingColKey.value = undefined;
   }
 
-  /** 筛选条件变化:丢弃未保存的编辑并整包重载 */
+  /** 筛选条件变化:未保存修改先确认再丢弃,确认后整包重载 */
   function handleFilterChange() {
+    if (dirtyCols.size) {
+      Modal.confirm({
+        title: '有未保存的修改',
+        content: `当前有 ${dirtyCols.size} 个项目列的修改尚未保存，切换年份/季度/单位后将丢弃。确定切换吗？`,
+        okText: '丢弃并切换',
+        cancelText: '继续编辑',
+        onOk: () => {
+          resetEditState();
+          dirtyCols.clear();
+          loadFill();
+        },
+      });
+      return;
+    }
     resetEditState();
     dirtyCols.clear();
     loadFill();
   }
 
-  // 切换类目后,上一类目的编辑状态一并退出(未保存列保留在脏列登记中,顶部保存仍可落库)
-  watch([activeCategory, activeSub], resetEditState);
+  // 切换类目:先把未保存的脏列自动落库,再退出编辑态(填一列保存一列)
+  watch([activeCategory, activeSub], async () => {
+    await autoPersistDirty();
+    resetEditState();
+  });
 
   /** 单列落库:值全量同步语义;新列(无 id)保存后用返回的 projectId 回填 */
   async function persistColumn(leafKey: string, col: ProjectColumn) {
@@ -292,17 +331,39 @@
     dirtyCols.delete(col.key);
   }
 
+  /** 切换前自动落库:把当前全部脏列(可跨类目)依次保存;失败列保留在登记中并提示 */
+  async function autoPersistDirty() {
+    if (!dirtyCols.size) return;
+    let failed = 0;
+    let firstError = '';
+    for (const [, { leafKey, col }] of [...dirtyCols]) {
+      try {
+        await persistColumn(leafKey, col);
+      } catch (e: unknown) {
+        failed += 1;
+        firstError ||= e instanceof Error ? e.message : '保存失败';
+      }
+    }
+    if (failed > 0) {
+      showMessage(`自动保存：有 ${failed} 列失败（${firstError}），该列仍待保存，可点顶部「保存」重试`);
+    }
+  }
+
   // ── 新增项目:居中 Modal 命名,确认后追加最右列并滚动到位 ──────────────
   const addModalOpen = ref(false);
   const newProjectName = ref('');
   const tableWrapRef = ref<HTMLDivElement>();
 
   function handleAddProject() {
+    if (!unitEditable.value) {
+      showMessage('当前单位为只读查看，不可填报');
+      return;
+    }
     newProjectName.value = '';
     addModalOpen.value = true;
   }
 
-  function handleAddConfirm() {
+  async function handleAddConfirm() {
     const name = newProjectName.value.trim();
     if (!name) {
       showMessage('请输入项目名称');
@@ -310,6 +371,8 @@
     }
     const leaf = activeLeaf.value;
     if (!leaf || !periodData.value) return;
+    // 新列进入编辑前,先把之前未保存的脏列自动落库
+    await autoPersistDirty();
     const tab = periodData.value[leaf.key] ?? (periodData.value[leaf.key] = { projects: [], totals: {} });
     addSeq += 1;
     const col = reactive<ProjectColumn>({ key: `add-${addSeq}`, name, imported: false, values: {} });
@@ -332,6 +395,10 @@
   const totalInput = ref<number>();
 
   function openTotalModal(indicatorKey: string) {
+    if (!unitEditable.value) {
+      showMessage('当前单位为只读查看，不可填报');
+      return;
+    }
     const leaf = activeLeaf.value;
     if (!leaf) return;
     totalEditKey.value = indicatorKey;
@@ -402,58 +469,127 @@
     dirtyCols.set(col.key, { leafKey, col });
   }
 
+  // ── 单元格键盘导航:Enter/↓ = 下一个可填单元格,↑ = 上一个 ──────────────
+  // 仅编辑列纵向跳(其它列没有输入框),自动跳过汇总/项目数等只读行;
+  // 捕获阶段拦截并阻断冒泡,抢在 InputNumber 自身的上下键调值之前。
+
+  function focusCellInput(el: HTMLElement) {
+    el.focus();
+    (el as HTMLInputElement).select?.();
+  }
+
+  function handleCellNav(e: KeyboardEvent) {
+    if (e.key !== 'Enter' && e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const cur = e.target as HTMLInputElement;
+    const row = cur.closest('tr');
+    if (!row) return;
+    const down = e.key !== 'ArrowUp';
+    const rowInputs = Array.from(row.querySelectorAll('input'));
+    const inRowNext = down ? rowInputs[rowInputs.indexOf(cur) + 1] : rowInputs[rowInputs.indexOf(cur) - 1];
+    if (inRowNext) {
+      focusCellInput(inRowNext);
+      return;
+    }
+    let r: HTMLElement | null = row;
+    while ((r = (down ? r.nextElementSibling : r.previousElementSibling) as HTMLElement | null)) {
+      const list = Array.from(r.querySelectorAll('input'));
+      const target = down ? list[0] : list[list.length - 1];
+      if (target) {
+        focusCellInput(target);
+        return;
+      }
+    }
+  }
+
+  /** 其中：本年新开工（r3，编码 102）：开关型指标，0=非新开工、1=是新开工；
+   *  合计 = 各项目列该字段的总计（即为"是新开工"的项目个数） */
+  const NEW_START_KEY = 'r3';
+
+  /** r3 显示口径：数值直出（含 0），不走通用"未填与 0 置空" */
+  function renderNewStart(value: number | string | [number, number] | undefined) {
+    return String(Number(value ?? 0));
+  }
+
   /** 单元格:编辑列内渲染输入控件(自动行除外),其余为只读文本 */
   function renderFillCell(item: IndicatorDef, col: ProjectColumn, leafKey: string) {
     if (editingColKey.value === col.key && (item.kind === 'fill' || item.kind === 'text')) {
+      if (item.key === NEW_START_KEY) {
+        // 新开工:开关录入(0/1),不参与键盘导航(无可键入的输入框,Enter/方向键会跳过本行)
+        return h('div', { class: 'flex w-full justify-center' }, [
+          h(Switch, {
+            size: 'default',
+            checked: Number(col.values[item.key] ?? 0) === 1,
+            checkedChildren: '是新开工',
+            unCheckedChildren: '非新开工',
+            'onUpdate:checked': (checked) => setCellValue(col, item.key, checked === true ? 1 : 0, leafKey),
+          }),
+        ]);
+      }
       if (item.kind === 'text') {
-        return h(Input, {
-          size: 'small',
-          value: String(col.values[item.key] ?? ''),
-          placeholder: '请输入来源说明',
-          'onUpdate:value': (value: string) => setCellValue(col, item.key, value, leafKey),
-        });
+        return h('div', { class: 'w-full', onKeydownCapture: handleCellNav }, [
+          h(Input, {
+            size: 'small',
+            value: String(col.values[item.key] ?? ''),
+            placeholder: '请输入来源说明',
+            'onUpdate:value': (value: string) => setCellValue(col, item.key, value, leafKey),
+          }),
+        ]);
       }
       const value = col.values[item.key];
-      return h(InputNumber, {
-        size: 'small',
-        class: 'w-full',
-        value: typeof value === 'number' ? value : undefined,
-        min: 0,
-        controls: false,
-        placeholder: '请输入',
-        'onUpdate:value': (value2: number | string | null) => setCellValue(col, item.key, value2 ?? undefined, leafKey),
-      });
+      return h('div', { class: 'w-full', onKeydownCapture: handleCellNav }, [
+        h(InputNumber, {
+          size: 'small',
+          class: 'w-full',
+          value: typeof value === 'number' ? value : undefined,
+          min: 0,
+          controls: false,
+          placeholder: '请输入',
+          'onUpdate:value': (value2: number | string | null) =>
+            setCellValue(col, item.key, value2 ?? undefined, leafKey),
+        }),
+      ]);
+    }
+    if (item.key === NEW_START_KEY) {
+      // 新开工读态:显示数值(0/1),未填默认 0
+      return renderNewStart(col.values[item.key]);
     }
     return renderDisplay(cellValue(item, col));
   }
 
-  /** 项目列头:「名称 + 编辑/删除图标」;编辑态下的编辑按钮换成保存 icon(点击即存该列) */
+  /** 项目列头:「名称 + 编辑/删除图标」;编辑态下的编辑按钮换成保存 icon(点击即存该列);只读单位不渲染图标 */
   function renderProjectHeader(col: ProjectColumn, leafKey: string) {
     const editing = editingColKey.value === col.key;
     const deletable = !(col.imported && quarter.value !== '1');
     return h('div', { class: 'flex items-center justify-between gap-1' }, [
       h('span', { class: 'flex-1 truncate text-left', title: col.name }, col.name),
-      h('span', { class: 'flex shrink-0 items-center gap-1' }, [
-        h(Tooltip, { title: editing ? '完成并保存本列' : '编辑本列' }, () =>
-          h(Icon, {
-            icon: editing ? 'ant-design:save-outlined' : 'ant-design:edit-outlined',
-            class: 'progress-fill-icon-edit',
-            onClick: () => toggleEdit(col, leafKey),
-          }),
-        ),
-        deletable
-          ? h(Popconfirm, { title: `确定删除项目「${col.name}」吗？`, onConfirm: () => handleDeleteColumn(col) }, () =>
+      unitEditable.value
+        ? h('span', { class: 'flex shrink-0 items-center gap-1' }, [
+            h(Tooltip, { title: editing ? '完成并保存本列' : '编辑本列' }, () =>
               h(Icon, {
-                icon: 'ant-design:delete-outlined',
-                class: 'progress-fill-icon',
+                icon: editing ? 'ant-design:save-outlined' : 'ant-design:edit-outlined',
+                class: 'progress-fill-icon-edit',
+                onClick: () => toggleEdit(col, leafKey),
               }),
-            )
-          : null,
-      ]),
+            ),
+            deletable
+              ? h(
+                  Popconfirm,
+                  { title: `确定删除项目「${col.name}」吗？`, onConfirm: () => handleDeleteColumn(col) },
+                  () =>
+                    h(Icon, {
+                      icon: 'ant-design:delete-outlined',
+                      class: 'progress-fill-icon',
+                    }),
+                )
+              : null,
+          ])
+        : null,
     ]);
   }
 
-  /** 进入/退出编辑:退出时该列若有改动立即落库 */
+  /** 进入/退出编辑:退出时该列若有改动立即落库(只读单位不允许进入编辑) */
   async function toggleEdit(col: ProjectColumn, leafKey: string) {
     if (editingColKey.value === col.key) {
       // 完成编辑:先退出编辑态,脏列落库
@@ -470,6 +606,12 @@
       }
       return;
     }
+    if (!unitEditable.value) {
+      showMessage('当前单位为只读查看，不可填报');
+      return;
+    }
+    // 进入新列编辑前,先把之前未保存的脏列自动落库(填一列保存一列)
+    await autoPersistDirty();
     editingColKey.value = col.key;
   }
 
@@ -492,30 +634,71 @@
     if (editingColKey.value === col.key) editingColKey.value = undefined;
   }
 
-  // ── 带入上一季度(服务端复制全部叶子类目;每周期×单位限一次) ────────────
+  // ── 带入上一季度(服务端复制全部叶子类目;普通模式每周期×单位限一次) ────
   const bringInTooltip = computed(() =>
     quarter.value === '1'
       ? '带入上一年第四季度填报的项目列（含数值，带入列可删除）'
       : '带入本年度上一季度填报的项目列（含数值，带入列不可删除）',
   );
 
-  async function handleBringIn() {
-    if (!reportUnit.value || broughtIn.value || loading.value) return;
+  const bringModalOpen = ref(false);
+  const bringing = ref(false);
+
+  function handleBringIn() {
+    if (!reportUnit.value || loading.value) return;
+    bringModalOpen.value = true;
+  }
+
+  /** 执行带入(普通/仅名称/强制):先自动落库脏列,成功后整包重载 */
+  async function doBringIn(mode: 'normal' | 'names' | 'force') {
+    if (bringing.value || !reportUnit.value) return;
+    if (mode === 'normal' && broughtIn.value) {
+      showMessage('已执行过数据带入');
+      return;
+    }
+    bringing.value = true;
     try {
+      await autoPersistDirty();
       const res = await bringInPrevPeriod({
         year: year.value,
         quarter: quarter.value,
         unit: reportUnit.value,
+        force: mode === 'force',
+        namesOnly: mode === 'names',
       });
-      showMessage(
-        `已带入 ${res.fromYear} 年${quarterLabel(res.fromQuarter)}填报的 ${res.broughtProjectCount} 个项目列`,
-      );
+      if (mode === 'names') {
+        showMessage(
+          `已带入 ${res.fromYear} 年${quarterLabel(res.fromQuarter)}的项目名称 ${res.broughtProjectCount} 列（值留空，由您填写）`,
+        );
+      } else {
+        const parts = [`新增 ${res.broughtProjectCount} 列`];
+        if (res.overwrittenProjectCount) parts.push(`覆盖同名 ${res.overwrittenProjectCount} 列`);
+        if (res.skippedProjectCount) parts.push(`跳过同名 ${res.skippedProjectCount} 列`);
+        showMessage(
+          `已${mode === 'force' ? '强制' : ''}带入 ${res.fromYear} 年${quarterLabel(res.fromQuarter)}数据（${parts.join('，')}）`,
+        );
+      }
+      bringModalOpen.value = false;
       resetEditState();
       dirtyCols.clear();
       await loadFill();
     } catch (e: unknown) {
       showMessage(e instanceof Error ? e.message : '带入失败');
+    } finally {
+      bringing.value = false;
     }
+  }
+
+  /** 强制带入:二次确认(覆盖同名项目列数据) */
+  function handleForceBringIn() {
+    Modal.confirm({
+      title: '强制带入确认',
+      content: '本季度同名项目列的数值将被上一季度数据覆盖，当前已修改的内容会丢失，确定继续吗？',
+      okText: '强制带入',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: () => doBringIn('force'),
+    });
   }
 
   /** 顶部保存:把全部脏列(可跨类目)依次落库 */
@@ -573,9 +756,9 @@
       : `${period} · ${activeLeaf.value?.label}`;
   });
 
-  /** 指标名称单元格:合计级录入行(total)在非总览下带蓝色「编辑」按钮,弹 Modal 直接录合计值 */
+  /** 指标名称单元格:合计级录入行(total)在非总览下带蓝色「编辑」按钮,弹 Modal 直接录合计值(只读单位不渲染) */
   function renderNameCell(value: string, record: FillRow) {
-    if (isOverview.value || record.kind !== 'total') return value;
+    if (isOverview.value || record.kind !== 'total' || !unitEditable.value) return value;
     return h('div', { class: 'flex items-center justify-between gap-1' }, [
       h('span', { class: 'flex-1 truncate' }, value),
       h(Tooltip, { title: '填写合计值（各项目单元格不填值）' }, () =>
@@ -651,7 +834,10 @@
         align: 'right',
         onHeaderCell: resizableHeaderCell,
         onCell: sumRowOnCell,
-        render: (_value: unknown, record: FillRow) => renderDisplay(tabTotal(INDICATOR_MAP[record.key], tab)),
+        render: (_value: unknown, record: FillRow) =>
+          record.key === NEW_START_KEY
+            ? renderNewStart(tabTotal(INDICATOR_MAP[record.key], tab))
+            : renderDisplay(tabTotal(INDICATOR_MAP[record.key], tab)),
       },
       ...projectColumns,
     ];
@@ -668,7 +854,9 @@
       onHeaderCell: resizableHeaderCell,
       onCell: sumRowOnCell,
       render: (_value: unknown, record: FillRow) =>
-        renderDisplay(tabTotal(INDICATOR_MAP[record.key], data?.[leaf.key])),
+        record.key === NEW_START_KEY
+          ? renderNewStart(tabTotal(INDICATOR_MAP[record.key], data?.[leaf.key]))
+          : renderDisplay(tabTotal(INDICATOR_MAP[record.key], data?.[leaf.key])),
     });
     /** 嵌套类目拆为三个二级子列(一级表头跨列),简单类目单列 */
     const categoryColumns: TableColumnsType<FillRow> = DATA_CATEGORIES.map((cat) =>
@@ -689,7 +877,10 @@
         align: 'right',
         onHeaderCell: resizableHeaderCell,
         onCell: sumRowOnCell,
-        render: (_value: unknown, record: FillRow) => renderDisplay(grandTotal(INDICATOR_MAP[record.key], data)),
+        render: (_value: unknown, record: FillRow) =>
+          record.key === NEW_START_KEY
+            ? renderNewStart(grandTotal(INDICATOR_MAP[record.key], data))
+            : renderDisplay(grandTotal(INDICATOR_MAP[record.key], data)),
       },
       ...categoryColumns,
     ];

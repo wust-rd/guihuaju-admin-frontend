@@ -31,7 +31,9 @@
     }
   }
 
-  [data-theme='light'] &-default {
+  // 新式 color/variant 按钮（如 color="danger" variant="solid"）会同时带 legacy 的
+  // ant-btn-default/ant-btn-primary 类；排除 danger 色，避免这里的直写声明盖掉 cssVar 体系的红底白字
+  [data-theme='light'] &-default:not(.ant-btn-color-dangerous) {
     color: @button-default-color;
     background-color: @button-default-bg-color;
     border-color: @button-default-border-color;
@@ -51,7 +53,7 @@
     //}
   }
 
-  &-primary {
+  &-primary:not(.ant-btn-color-dangerous) {
     color: @white;
     background-color: @button-primary-color;
 

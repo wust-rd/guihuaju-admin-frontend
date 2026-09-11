@@ -33,30 +33,37 @@
           <Select v-model:value="year" :options="yearOptions" class="ml-2 w-28" @change="handleFilterChange" />
           <span class="ml-6 text-gray-500">填报季度</span>
           <Select v-model:value="quarter" :options="QUARTER_OPTIONS" class="ml-2 w-28" @change="handleFilterChange" />
-          <span class="ml-6 text-gray-500">项目报送单位</span>
-          <Select
-            v-model:value="reportUnit"
-            :options="reportUnitOptions"
-            placeholder="请选择"
-            class="ml-2 w-32"
-            @change="handleFilterChange"
-          />
+          <template v-if="reportUnitOptions.length > 1">
+            <span class="ml-6 text-gray-500">项目报送单位</span>
+            <Select
+              v-model:value="reportUnit"
+              :options="reportUnitOptions"
+              placeholder="请选择"
+              show-search
+              option-filter-prop="label"
+              class="ml-2 w-52"
+              @change="handleFilterChange"
+            />
+            <span v-if="!unitEditable" class="ml-2 text-orange-500">只读查看</span>
+          </template>
         </div>
         <div class="flex items-center">
-          <a-button @click="handleAddProject"> 新增项目 </a-button>
+          <a-button type="primary" v-if="unitEditable" @click="handleAddProject">
+            <Icon icon="i-fluent:add-12-filled" /> 新增
+          </a-button>
           <a-button class="ml-2" :loading="exporting" @click="handleExport"> 导出 </a-button>
-          <a-button type="primary" class="ml-2" :loading="saving" @click="handleSave"> 保存 </a-button>
+          <a-button v-if="unitEditable" type="primary" class="ml-2" :loading="saving" @click="handleSave">
+            保存
+          </a-button>
         </div>
       </div>
     </Card>
 
     <Card :title="tableCardTitle">
       <template #extra>
-        <Tooltip :title="bringInTooltip">
-          <a-button size="small" :disabled="broughtIn || loading" @click="handleBringIn">
+          <a-button v-if="unitEditable" size="small" :disabled="loading" @click="handleBringIn">
             带入上一季度填写的项目列
           </a-button>
-        </Tooltip>
       </template>
       <div ref="tableWrapRef">
         <Table
@@ -72,6 +79,21 @@
         />
       </div>
     </Card>
+
+    <Modal v-model:open="bringModalOpen" title="带入上一季度填写的项目列" centered :footer="null" width="800">
+      <div class="pt-2 text-gray-600">
+        为方便用户填写，系统设计了带入上一季度填写的项目列功能，用户可直接在同名项目列上更新数据。
+      </div>
+      <div class="mt-5 flex items-center justify-between gap-3">
+        <a-button color="danger" variant="solid" :disabled="bringing" @click="handleForceBringIn">
+          强制带入，覆盖数据
+        </a-button>
+        <div class="flex flex-col gap-2">
+          <a-button type="primary" :loading="bringing" @click="doBringIn('normal')"> 带入上一季度填写的项目列 </a-button>
+          <a-button :disabled="bringing" @click="doBringIn('names')"> 仅带入项目名称，值由我自己填写 </a-button>
+        </div>
+      </div>
+    </Modal>
 
     <Modal v-model:open="addModalOpen" title="新增项目" centered @ok="handleAddConfirm">
       <div class="pt-2">
@@ -150,6 +172,8 @@
   /** 项目报送单位(存单位编码;默认第一个有权限的单位) */
   const reportUnit = ref<string>();
   const reportUnitOptions = computed(() => UNITS.map((unit) => ({ label: unit.name, value: unit.code })));
+  /** 当前所选单位是否可填报(false=主管单位只读查看其他单位,隐藏全部写入口) */
+  const unitEditable = computed(() => UNITS.find((unit) => unit.code === reportUnit.value)?.editable !== false);
 
   // ── 数据加载:字典一次 + (年份×季度×单位)整包(成效域无类目维度) ────────
   const loading = ref(false);
@@ -192,7 +216,22 @@
   }
 
   /** 筛选条件变化:丢弃未保存的编辑并整包重载 */
+  /** 筛选条件变化:未保存修改先确认再丢弃,确认后整包重载 */
   function handleFilterChange() {
+    if (dirtyCols.size) {
+      Modal.confirm({
+        title: '有未保存的修改',
+        content: `当前有 ${dirtyCols.size} 个项目列的修改尚未保存，切换年份/季度/单位后将丢弃。确定切换吗？`,
+        okText: '丢弃并切换',
+        cancelText: '继续编辑',
+        onOk: () => {
+          resetEditState();
+          dirtyCols.clear();
+          loadFill();
+        },
+      });
+      return;
+    }
     resetEditState();
     dirtyCols.clear();
     loadFill();
@@ -220,23 +259,47 @@
     dirtyCols.delete(col.key);
   }
 
+  /** 切换前自动落库:把当前全部脏列依次保存;失败列保留在登记中并提示 */
+  async function autoPersistDirty() {
+    if (!dirtyCols.size) return;
+    let failed = 0;
+    let firstError = '';
+    for (const [, col] of [...dirtyCols]) {
+      try {
+        await persistColumn(col);
+      } catch (e: unknown) {
+        failed += 1;
+        firstError ||= e instanceof Error ? e.message : '保存失败';
+      }
+    }
+    if (failed > 0) {
+      showMessage(`自动保存：有 ${failed} 列失败（${firstError}），该列仍待保存，可点顶部「保存」重试`);
+    }
+  }
+
   // ── 新增项目:居中 Modal 命名,确认后追加最右列并滚动到位 ──────────────
   const addModalOpen = ref(false);
   const newProjectName = ref('');
   const tableWrapRef = ref<HTMLDivElement>();
 
   function handleAddProject() {
+    if (!unitEditable.value) {
+      showMessage('当前单位为只读查看，不可填报');
+      return;
+    }
     newProjectName.value = '';
     addModalOpen.value = true;
   }
 
-  function handleAddConfirm() {
+  async function handleAddConfirm() {
     const name = newProjectName.value.trim();
     if (!name) {
       showMessage('请输入项目名称');
       return;
     }
     if (!unitData.value) return;
+    // 新列进入编辑前,先把之前未保存的脏列自动落库
+    await autoPersistDirty();
     addSeq += 1;
     const col = reactive<ProjectColumn>({ key: `add-${addSeq}`, name, imported: false, values: {} });
     unitData.value.projects.push(col);
@@ -267,30 +330,65 @@
     if (editingColKey.value === col.key) editingColKey.value = undefined;
   }
 
-  // ── 带入上一季度(服务端复制;成效域独立计数,每周期×单位限一次) ─────────
-  const bringInTooltip = computed(() =>
-    quarter.value === '1'
-      ? '带入上一年第四季度填报的项目列（含数值，带入列可删除）'
-      : '带入本年度上一季度填报的项目列（含数值，带入列不可删除）',
-  );
+  // ── 带入上一季度(服务端复制;成效域独立计数,普通模式每周期×单位限一次) ─
+  const bringModalOpen = ref(false);
+  const bringing = ref(false);
 
-  async function handleBringIn() {
-    if (!reportUnit.value || broughtIn.value || loading.value) return;
+  function handleBringIn() {
+    if (!reportUnit.value || loading.value) return;
+    bringModalOpen.value = true;
+  }
+
+  /** 执行带入(普通/仅名称/强制):先自动落库脏列,成功后整包重载 */
+  async function doBringIn(mode: 'normal' | 'names' | 'force') {
+    if (bringing.value || !reportUnit.value) return;
+    if (mode === 'normal' && broughtIn.value) {
+      showMessage('已执行过数据带入');
+      return;
+    }
+    bringing.value = true;
     try {
+      await autoPersistDirty();
       const res = await bringInPrevPeriod({
         year: year.value,
         quarter: quarter.value,
         unit: reportUnit.value,
+        force: mode === 'force',
+        namesOnly: mode === 'names',
       });
-      showMessage(
-        `已带入 ${res.fromYear} 年${quarterLabel(res.fromQuarter)}填报的 ${res.broughtProjectCount} 个项目列`,
-      );
+      if (mode === 'names') {
+        showMessage(
+          `已带入 ${res.fromYear} 年${quarterLabel(res.fromQuarter)}的项目名称 ${res.broughtProjectCount} 列（值留空，由您填写）`,
+        );
+      } else {
+        const parts = [`新增 ${res.broughtProjectCount} 列`];
+        if (res.overwrittenProjectCount) parts.push(`覆盖同名 ${res.overwrittenProjectCount} 列`);
+        if (res.skippedProjectCount) parts.push(`跳过同名 ${res.skippedProjectCount} 列`);
+        showMessage(
+          `已${mode === 'force' ? '强制' : ''}带入 ${res.fromYear} 年${quarterLabel(res.fromQuarter)}数据（${parts.join('，')}）`,
+        );
+      }
+      bringModalOpen.value = false;
       resetEditState();
       dirtyCols.clear();
       await loadFill();
     } catch (e: unknown) {
       showMessage(e instanceof Error ? e.message : '带入失败');
+    } finally {
+      bringing.value = false;
     }
+  }
+
+  /** 强制带入:二次确认(覆盖同名项目列数据) */
+  function handleForceBringIn() {
+    Modal.confirm({
+      title: '强制带入确认',
+      content: '本季度同名项目列的数值将被上一季度数据覆盖，当前已修改的内容会丢失，确定继续吗？',
+      okText: '强制带入',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: () => doBringIn('force'),
+    });
   }
 
   /** 顶部保存:把全部脏列依次落库 */
@@ -391,6 +489,41 @@
     dirtyCols.set(col.key, col);
   }
 
+  // ── 单元格键盘导航:Enter/↓ = 下一个可填单元格,↑ = 上一个 ──────────────
+  // 仅编辑列纵向跳(其它列没有输入框),自动跳过汇总/说明等只读行;
+  // 双值格(数|面积)同行两框先左右衔接,行尾再跳下一行;
+  // 捕获阶段拦截并阻断冒泡,抢在 InputNumber 自身的上下键调值之前。
+
+  function focusCellInput(el: HTMLElement) {
+    el.focus();
+    (el as HTMLInputElement).select?.();
+  }
+
+  function handleCellNav(e: KeyboardEvent) {
+    if (e.key !== 'Enter' && e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const cur = e.target as HTMLInputElement;
+    const row = cur.closest('tr');
+    if (!row) return;
+    const down = e.key !== 'ArrowUp';
+    const rowInputs = Array.from(row.querySelectorAll('input'));
+    const inRowNext = down ? rowInputs[rowInputs.indexOf(cur) + 1] : rowInputs[rowInputs.indexOf(cur) - 1];
+    if (inRowNext) {
+      focusCellInput(inRowNext);
+      return;
+    }
+    let r: HTMLElement | null = row;
+    while ((r = (down ? r.nextElementSibling : r.previousElementSibling) as HTMLElement | null)) {
+      const list = Array.from(r.querySelectorAll('input'));
+      const target = down ? list[0] : list[list.length - 1];
+      if (target) {
+        focusCellInput(target);
+        return;
+      }
+    }
+  }
+
   /** 单元格:编辑列内的填报行渲染输入控件(双值行两个框中间固定竖线),其余为只读文本 */
   function renderFillCell(item: EffectIndicatorDef, col: ProjectColumn) {
     if (editingColKey.value === col.key && item.kind === 'fill') {
@@ -410,52 +543,59 @@
             'onUpdate:value': (value2: number | string | null) =>
               setDualCellValue(col, item.key, slot, typeof value2 === 'number' ? value2 : undefined),
           });
-        return h('div', { class: 'flex w-full items-center gap-1' }, [
+        return h('div', { class: 'flex w-full items-center gap-1', onKeydownCapture: handleCellNav }, [
           dualInput(0, '数'),
           h('span', { class: 'shrink-0 text-gray-400' }, '|'),
           dualInput(1, '面积'),
         ]);
       }
-      return h(InputNumber, {
-        size: 'small',
-        class: 'w-full',
-        value: typeof value === 'number' ? value : undefined,
-        min: 0,
-        controls: false,
-        placeholder: '请输入',
-        'onUpdate:value': (value2: number | string | null) => setCellValue(col, item.key, value2 ?? undefined),
-      });
+      return h('div', { class: 'w-full', onKeydownCapture: handleCellNav }, [
+        h(InputNumber, {
+          size: 'small',
+          class: 'w-full',
+          value: typeof value === 'number' ? value : undefined,
+          min: 0,
+          controls: false,
+          placeholder: '请输入',
+          'onUpdate:value': (value2: number | string | null) => setCellValue(col, item.key, value2 ?? undefined),
+        }),
+      ]);
     }
     return renderDisplay(cellValue(item, col));
   }
 
-  /** 项目列头:「名称 + 编辑/删除图标」;编辑态下的编辑按钮换成保存 icon(点击即存该列) */
+  /** 项目列头:「名称 + 编辑/删除图标」;编辑态下的编辑按钮换成保存 icon(点击即存该列);只读单位不渲染图标 */
   function renderProjectHeader(col: ProjectColumn) {
     const editing = editingColKey.value === col.key;
     const deletable = !(col.imported && quarter.value !== '1');
     return h('div', { class: 'flex items-center justify-between gap-1' }, [
       h('span', { class: 'flex-1 truncate text-left', title: col.name }, col.name),
-      h('span', { class: 'flex shrink-0 items-center gap-1' }, [
-        h(Tooltip, { title: editing ? '完成并保存本列' : '编辑本列' }, () =>
-          h(Icon, {
-            icon: editing ? 'ant-design:save-outlined' : 'ant-design:edit-outlined',
-            class: 'effect-fill-icon-edit',
-            onClick: () => toggleEdit(col),
-          }),
-        ),
-        deletable
-          ? h(Popconfirm, { title: `确定删除项目「${col.name}」吗？`, onConfirm: () => handleDeleteColumn(col) }, () =>
+      unitEditable.value
+        ? h('span', { class: 'flex shrink-0 items-center gap-1' }, [
+            h(Tooltip, { title: editing ? '完成并保存本列' : '编辑本列' }, () =>
               h(Icon, {
-                icon: 'ant-design:delete-outlined',
-                class: 'effect-fill-icon',
+                icon: editing ? 'ant-design:save-outlined' : 'ant-design:edit-outlined',
+                class: 'effect-fill-icon-edit',
+                onClick: () => toggleEdit(col),
               }),
-            )
-          : null,
-      ]),
+            ),
+            deletable
+              ? h(
+                  Popconfirm,
+                  { title: `确定删除项目「${col.name}」吗？`, onConfirm: () => handleDeleteColumn(col) },
+                  () =>
+                    h(Icon, {
+                      icon: 'ant-design:delete-outlined',
+                      class: 'effect-fill-icon',
+                    }),
+                )
+              : null,
+          ])
+        : null,
     ]);
   }
 
-  /** 进入/退出编辑:退出时该列若有改动立即落库 */
+  /** 进入/退出编辑:退出时该列若有改动立即落库(只读单位不允许进入编辑) */
   async function toggleEdit(col: ProjectColumn) {
     if (editingColKey.value === col.key) {
       editingColKey.value = undefined;
@@ -471,6 +611,12 @@
       }
       return;
     }
+    if (!unitEditable.value) {
+      showMessage('当前单位为只读查看，不可填报');
+      return;
+    }
+    // 进入新列编辑前,先把之前未保存的脏列自动落库(填一列保存一列)
+    await autoPersistDirty();
     editingColKey.value = col.key;
   }
 

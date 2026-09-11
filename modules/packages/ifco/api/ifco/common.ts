@@ -1,9 +1,9 @@
 /**
- * ifco —— 项目进展/成效填报共用：数据类型、周期选项与静态单位清单。
+ * ifco —— 项目进展/成效填报共用：数据类型、周期选项。
  * 真实接口接入后的定位：
  * - 数据类型（类目/项目列/周期数据）与季度选项、季度文案为两个填报域共用；
- * - REPORT_UNITS 仅供 project-library（在库项目管理，仍为静态假数据阶段）使用，
- *   填报域的单位清单已改为接口拉取（progress-fill/index.ts 的 UNITS）；
+ * - 报送单位清单已全部接口拉取（progress-fill/index.ts 的 UNITS，来源 /dict/units，
+ *   按用户数据权限过滤）；project-library 的行政区为本地静态假数据（见该模块）；
  * - 指标/类目字典、填报数据读写均见 progress-fill 与 effect-fill 两个 api 层。
  */
 
@@ -55,22 +55,3 @@ export function quarterLabel(quarter: string): string {
   return QUARTER_LABELS[quarter] ?? quarter;
 }
 
-/** 项目报送单位静态清单：仅供 project-library 假数据阶段使用；填报域已改接口拉取（含 13 区编码） */
-export const REPORT_UNITS = [
-  '市财政厅',
-  '市发改委',
-  '市直单位',
-  '江岸区',
-  '江汉区',
-  '硚口区',
-  '汉阳区',
-  '武昌区',
-  '青山区',
-  '洪山区',
-  '东西湖区',
-  '蔡甸区',
-  '江夏区',
-  '黄陂区',
-  '新洲区',
-  '汉南区',
-] as const;

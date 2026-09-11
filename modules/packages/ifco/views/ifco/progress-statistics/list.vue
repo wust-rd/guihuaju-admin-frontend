@@ -34,6 +34,7 @@
 
     <Card :title="tableCardTitle">
       <RadioGroup
+        v-if="allowedUnits.length > 1"
         v-model:value="activeUnit"
         :options="unitOptions"
         option-type="button"
@@ -122,6 +123,10 @@
         activeUnit.value === 'overview' ? undefined : activeUnit.value,
       );
       allowedUnits.splice(0, allowedUnits.length, ...res.allowedUnits);
+      // 单单位账号(区局):隐藏页签并直接定位到本单位(overview 聚合口径与单单位相同)
+      if (allowedUnits.length === 1 && activeUnit.value === 'overview') {
+        activeUnit.value = allowedUnits[0].code;
+      }
       if (activeUnit.value !== 'overview' && !res.allowedUnits.some((u) => u.code === activeUnit.value)) {
         activeUnit.value = 'overview';
       }
@@ -143,10 +148,7 @@
     await loadStat();
   });
 
-  const tableCardTitle = computed(() => {
-    const period = `${year.value}年 ${quarterLabel(quarter.value)}`;
-    return activeUnitName.value ? `${period} · ${activeUnitName.value}` : `${period} · 全武汉市`;
-  });
+  const tableCardTitle = computed(() => `${year.value}年 ${quarterLabel(quarter.value)} 项目进展统计`);
 
   /** 自动行(汇总/项目数)加粗只读 */
   const sumRowOnCell = (record: StatRow) => ({

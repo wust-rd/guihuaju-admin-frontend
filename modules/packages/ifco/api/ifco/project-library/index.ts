@@ -12,8 +12,6 @@
  * 其余 45 条按固定规则确定性生成凑满 50 条（刷新即恢复，无随机值）。
  */
 
-import { REPORT_UNITS } from '../common';
-
 /** 库：统计卡点选 = 表格筛选维度，经路由 ?library= 持久化 */
 export type LibraryKey = 'planning' | 'reserve' | 'implementing' | 'exited';
 
@@ -25,8 +23,29 @@ export const LIBRARY_LABELS: Record<LibraryKey, string> = {
   exited: '已退出',
 };
 
-/** 行政区选项：武汉市各行政区（先不含功能区；后端接入后换接口） */
-export { REPORT_UNITS as DISTRICTS };
+/**
+ * 行政区选项（静态假数据，后端接入后换 /dict/units 接口拉取）：
+ * 武汉市 16 个区级行政区（含功能区），与后端 js_sys_office 的 16 个区局机构一一对应
+ * （机构名去掉“局”字，如 江岸区局→江岸区；不含市财政局/市发改委——它们是市直报送单位，不是行政区）。
+ */
+export const DISTRICTS = [
+  '江岸区',
+  '江汉区',
+  '硚口区',
+  '汉阳区',
+  '武昌区',
+  '青山区',
+  '洪山区',
+  '东西湖区',
+  '蔡甸区',
+  '江夏区',
+  '黄陂区',
+  '新洲区',
+  '武汉东湖新技术开发区',
+  '武汉经济技术开发区',
+  '东湖生态旅游风景区',
+  '长江新区',
+] as const;
 
 /** 项目归属：市级更新片区内项目与前期规划已入库更新片区关联 */
 export type ProjectAffiliation = 'city-area' | 'district-area' | 'scattered';
@@ -144,7 +163,7 @@ export const INDUSTRY_SUPERVISION_DEPT_LIST = ['市住更局', '市财政局', '
 
 /** 责任部门（假数据：各区住更局 + 市级行业主管部门；转库申请的主审单位） */
 export const RESPONSIBLE_DEPT_LIST = [
-  ...REPORT_UNITS.map((name) => `${name}住更局`),
+  ...DISTRICTS.map((name) => `${name}住更局`),
   ...INDUSTRY_SUPERVISION_DEPT_LIST,
 ];
 
@@ -589,7 +608,7 @@ function pick<T>(list: readonly T[], i: number): T {
 export const PROJECTS: ProjectLibraryItem[] = [
   ...VERBATIM_ROWS,
   ...GEN_LIBRARY_PLAN.map((library, i): ProjectLibraryItem => {
-    const district = REPORT_UNITS[i % REPORT_UNITS.length];
+    const district = DISTRICTS[i % DISTRICTS.length];
     const industrySupervisionDeptList =
       i % 4 === 0 ? [...INDUSTRY_SUPERVISION_DEPT_LIST] : [pick(INDUSTRY_SUPERVISION_DEPT_LIST, i)];
     const affiliation = pick(PROJECT_AFFILIATION_OPTIONS, i).value as ProjectAffiliation;

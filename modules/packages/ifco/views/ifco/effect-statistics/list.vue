@@ -105,7 +105,7 @@
     loadStat();
   });
 
-  const tableCardTitle = computed(() => `${year.value}年 ${quarterLabel(quarter.value)} 项目实施成效统计`);
+  const tableCardTitle = computed(() => `${year.value}年 ${quarterLabel(quarter.value)} 项目成效统计`);
 
   /** 节标题行加粗;全武汉市列数值加粗(全市口径) */
   const rowOnCell = (record: EffectStatRow, columnKey?: string) => ({

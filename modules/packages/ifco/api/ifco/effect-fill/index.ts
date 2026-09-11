@@ -276,15 +276,27 @@ export async function deleteEffectProject(id: string): Promise<{ projectName: st
   );
 }
 
-/** 成效带入上一季度（与进展域带入次数互不影响） */
+/** 带入上一季度结果（两域共用形态） */
+export type BringInResult = {
+  /** 新增带入的项目列数 */
+  broughtProjectCount: number;
+  /** 强制带入覆盖的同名列数（普通带入为 0） */
+  overwrittenProjectCount?: number;
+  /** 跳过的同名列数（本季度已存在） */
+  skippedProjectCount?: number;
+  fromYear: string;
+  fromQuarter: string;
+};
+
+/** 成效带入上一季度（与进展域带入次数互不影响；force=强制，覆盖同名项目列数据） */
 export async function bringInPrevPeriod(params: {
   year: number | string;
   quarter: string;
   unit: string;
-}): Promise<{ broughtProjectCount: number; fromYear: string; fromQuarter: string }> {
-  return unwrap<{ broughtProjectCount: number; fromYear: string; fromQuarter: string }>(
-    defHttp.postJson({ url: BASE + '/fill/bringIn', data: params }),
-  );
+  force?: boolean;
+  namesOnly?: boolean;
+}): Promise<BringInResult> {
+  return unwrap<BringInResult>(defHttp.postJson({ url: BASE + '/fill/bringIn', data: params }));
 }
 
 // ── 统计（服务端已聚合；双值两行合并为二元组展示） ────────────────────

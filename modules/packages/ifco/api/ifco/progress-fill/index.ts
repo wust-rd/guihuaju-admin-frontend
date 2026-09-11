@@ -65,7 +65,7 @@ type CategoryVo = {
 };
 
 /** GET /dict/units 行 */
-type UnitVo = { code: string; name: string };
+type UnitVo = { code: string; name: string; editable?: boolean };
 
 /** GET /fill/data 的 data */
 type FillDataVo = {
@@ -303,15 +303,27 @@ export async function saveProgressTotal(params: {
   );
 }
 
-/** 带入上一季度（每「周期×单位」限一次，重复返回 400 文案） */
+/** 带入上一季度结果（两域共用形态） */
+export type BringInResult = {
+  /** 新增带入的项目列数 */
+  broughtProjectCount: number;
+  /** 强制带入覆盖的同名列数（普通带入为 0） */
+  overwrittenProjectCount?: number;
+  /** 跳过的同名列数（本季度已存在） */
+  skippedProjectCount?: number;
+  fromYear: string;
+  fromQuarter: string;
+};
+
+/** 带入上一季度（普通模式每「周期×单位」限一次；force=true 强制：跳过限制并覆盖同名项目列数据） */
 export async function bringInPrevPeriod(params: {
   year: number | string;
   quarter: string;
   unit: string;
-}): Promise<{ broughtProjectCount: number; fromYear: string; fromQuarter: string }> {
-  return unwrap<{ broughtProjectCount: number; fromYear: string; fromQuarter: string }>(
-    defHttp.postJson({ url: BASE + '/fill/bringIn', data: params }),
-  );
+  force?: boolean;
+  namesOnly?: boolean;
+}): Promise<BringInResult> {
+  return unwrap<BringInResult>(defHttp.postJson({ url: BASE + '/fill/bringIn', data: params }));
 }
 
 // ── 统计（服务端已聚合，前端直接渲染） ───────────────────────────────
