@@ -88,15 +88,14 @@ type FillProjectVo = {
   values: Record<string, number | string | null>;
 };
 
-/** GET /stat/data 的 data（无 unit = 全市聚合） */
+/** GET /stat/data 的 data（一次返回全部可见口径：overview + 每单位一份） */
 type StatDataVo = {
   year: string;
   quarter: string;
-  unitCode: string | null;
-  unitName: string | null;
   allowedUnits: UnitVo[];
   categories: { key: string; name: string }[];
-  rows: StatRowVo[];
+  overview: StatRowVo[];
+  unitDatas: { code: string; name: string; rows: StatRowVo[] }[];
 };
 
 type StatRowVo = {
@@ -334,41 +333,59 @@ export type ProgressStatRow = IndicatorDef & {
   categories: Record<string, number | undefined>;
 };
 
-/** 统计页数据 */
-export type ProgressStatData = {
-  allowedUnits: UnitVo[];
+/** 单个报送单位的统计行包 */
+export type ProgressStatUnitData = {
+  code: string;
+  name: string;
   rows: ProgressStatRow[];
 };
 
-/** 进展统计：unit 省略 = 全市（当前用户可见单位合计） */
+/** 统计页数据（一次返回全部可见口径，切换单位无需重复调用） */
+export type ProgressStatData = {
+  allowedUnits: UnitVo[];
+  /** 允许单位合计行（区局账号 = 本单位数据） */
+  overviewRows: ProgressStatRow[];
+  /** 每个允许单位一份行数据（市局 = 全部报送单位；区局 = 仅本单位） */
+  unitDatas: ProgressStatUnitData[];
+};
+
+/** 进展统计：一次拉取全部可见口径（overview + 每单位一份） */
 export async function loadProgressStatData(
   year: number | string,
   quarter: string,
-  unit?: string,
 ): Promise<ProgressStatData> {
   const vo = await unwrap<StatDataVo>(
     defHttp.get({
       url: BASE + '/stat/data',
-      params: unit ? { year: String(year), quarter, unit } : { year: String(year), quarter },
+      params: { year: String(year), quarter },
     }),
   );
-  const rows: ProgressStatRow[] = vo.rows.map((row) => {
-    const categories: Record<string, number | undefined> = {};
-    for (const [k, v] of Object.entries(row.categories ?? {})) {
-      categories[k] = v ?? undefined;
-    }
-    return {
-      key: row.key,
-      name: '\u3000'.repeat(row.level || 0) + row.name,
-      unit: row.unit ?? '',
-      code: row.code ?? '',
-      kind: row.kind,
-      parts: undefined,
-      grand: row.grand ?? undefined,
-      categories,
-    };
-  });
-  return { allowedUnits: vo.allowedUnits ?? [], rows };
+  const adaptRows = (list: StatRowVo[]): ProgressStatRow[] =>
+    list.map((row) => {
+      const categories: Record<string, number | undefined> = {};
+      for (const [k, v] of Object.entries(row.categories ?? {})) {
+        categories[k] = v ?? undefined;
+      }
+      return {
+        key: row.key,
+        name: '\u3000'.repeat(row.level || 0) + row.name,
+        unit: row.unit ?? '',
+        code: row.code ?? '',
+        kind: row.kind,
+        parts: undefined,
+        grand: row.grand ?? undefined,
+        categories,
+      };
+    });
+  return {
+    allowedUnits: vo.allowedUnits ?? [],
+    overviewRows: adaptRows(vo.overview ?? []),
+    unitDatas: (vo.unitDatas ?? []).map((unit) => ({
+      code: unit.code,
+      name: unit.name,
+      rows: adaptRows(unit.rows ?? []),
+    })),
+  };
 }
 
 // ── 展示口径：sum 汇总 / count 项目数由前端实时计算（同后端口径） ──────

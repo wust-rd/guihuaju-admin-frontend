@@ -429,6 +429,7 @@
       await exportEffectExcel({
         year: year.value,
         quarter: quarter.value,
+        unitName: UNITS.find((unit) => unit.code === reportUnit.value)?.name,
         unitData: unitData.value,
       });
       showMessage(`已导出 ${year.value} 年${quarterLabel(quarter.value)}项目实施成效填报`);

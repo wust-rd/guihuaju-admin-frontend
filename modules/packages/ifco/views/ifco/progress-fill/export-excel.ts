@@ -1,25 +1,28 @@
 /**
- * ifco —— 项目进展填报：Excel 导出（xlsx(SheetJS) 生成 + file-saver 下载）
+ * ifco —— 项目进展填报：Excel 导出（xlsx(SheetJS) 多 sheet + file-saver 下载）
  *
  * 复用项目既有的 Excel 方案（@jeesite/core 的 xlsx 依赖，同版本声明于本包），
  * 与 packages/core/components/Excel/src/Export2Excel.ts 同源，因需要多级合并表头
  * 而直接使用 utils.aoa_to_sheet + !merges/!cols。
  *
- * 表头结构对齐原 Excel（三行表头）：
- *   行 1  一级类目跨列（简单类目与行 2 纵向合并）；
- *   行 2  嵌套类目（老旧街区、老旧厂区、城中村等更新改造）的二级跨列；
- *   行 3  各项目名 + 每个叶子类目一列「小计」（= 填报页该类目合计列）；
- *   左侧固定 4 列（指标名称 / 计量单位 / 代码 / 总计）纵向合并三行，总计列在最左。
- * 数值单元格纯数字输出（不用千分位）；xlsx 社区版不支持字体/填充样式，
- * 汇总行不加粗、无冻结窗格（如需可后端模板导出替代）。
+ * sheet 结构对齐填报页左侧 RadioGroup（一级类目页签）：
+ *   Sheet「总览」   固定 3 列 + 总计 + 每个叶子类目一列小计（嵌套类目一级表头跨列包裹二级）；
+ *   简单类目 sheet  固定 3 列 + 项目列 + 末列小计（类目名行 1 跨列）；
+ *   嵌套类目 sheet（如「老旧街区、老旧厂区、城中村等更新改造」）
+ *                  行 1 = 二级类目名（老旧街区更新改造/老旧厂区更新改造/城中村改造）
+ *                  按各自「项目列 + 小计」跨列合并——二级类目包裹项目的形式；
+ *                  行 2 = 各项目名 + 小计。
+ *   固定 3 列（指标名称/计量单位/代码）在所有 sheet 纵向合并两行表头。
+ * 数值直出含 0；样式走 xlsx-js-style 分支：全表细边框。
  */
-import { utils, write } from 'xlsx';
-import type { Range, WorkBook, WorkSheet } from 'xlsx';
+import { utils, write } from 'xlsx-js-style';
+import type { CellObject, Range, WorkBook, WorkSheet } from 'xlsx-js-style';
 import { saveAs } from 'file-saver';
-import type { CategoryDef, PeriodFillData, ProjectColumn } from '@jeesite/ifco/api/ifco/progress-fill';
+import type { CategoryDef, IndicatorDef, PeriodFillData, ProjectColumn } from '@jeesite/ifco/api/ifco/progress-fill';
 import {
   DATA_CATEGORIES,
   INDICATORS,
+  LEAF_CATEGORIES,
   cellValue,
   grandTotal,
   quarterLabel,
@@ -29,10 +32,15 @@ import {
 type ExportParams = {
   year: number;
   quarter: string;
+  /** 报送单位名称（文件名后缀，如 江汉区局） */
+  unitName?: string;
   periodData: PeriodFillData;
 };
 
-/** 叶子类目的列区块：项目列若干 + 末列小计 */
+/** 其中：本年新开工（开关型指标，数值直出含 0） */
+const NEW_START_KEY = 'r3';
+
+/** 叶子类目的列区块（项目列若干 + 末列小计） */
 type LeafBlock = {
   key: string;
   label: string;
@@ -41,103 +49,152 @@ type LeafBlock = {
   endCol: number;
 };
 
-/** 一级类目的列区块 */
-type CatBlock = {
-  category: CategoryDef;
-  leaves: LeafBlock[];
-  startCol: number;
-  endCol: number;
-};
+/** 未填与 0 置空(与页面展示一致:不补斜杠、不补 0)；r3 例外，数值直出含 0 */
+function cellOut(item: IndicatorDef, value: number | string | undefined): number | string | undefined {
+  if (item.key === NEW_START_KEY) {
+    return Number(value ?? 0);
+  }
+  return value === 0 ? undefined : value;
+}
 
-export async function exportProgressFillExcel({ year, quarter, periodData }: ExportParams): Promise<void> {
-  // ── 列布局：0~3 固定（指标名称/计量单位/代码/总计），其后每个一级类目一组 ──
-  let nextCol = 4;
-  const catBlocks: CatBlock[] = DATA_CATEGORIES.map((category) => {
-    const startCol = nextCol;
-    const leaves = (category.children ?? [category]).map((leaf) => {
-      const projects = periodData[leaf.key]?.projects ?? [];
-      const leafStart = nextCol;
-      nextCol += projects.length + 1; // 项目列 + 小计
-      return { key: leaf.key, label: leaf.label, projects, startCol: leafStart, endCol: nextCol - 1 };
-    });
-    return { category, leaves, startCol, endCol: nextCol - 1 };
+/** 叶子区块布局：从 startCol 起排「项目列 + 小计」 */
+function layoutLeaves(category: CategoryDef, periodData: PeriodFillData, startCol: number): LeafBlock[] {
+  let nextCol = startCol;
+  return (category.children ?? [category]).map((leaf) => {
+    const projects = periodData[leaf.key]?.projects ?? [];
+    const leafStart = nextCol;
+    nextCol += projects.length + 1;
+    return { key: leaf.key, label: leaf.label, projects, startCol: leafStart, endCol: nextCol - 1 };
   });
-  const lastCol = Math.max(nextCol - 1, 3);
+}
 
-  // ── 组装 AOA（3 行表头 + 23 行指标） ────────────────────────────────
-  const rows: (string | number | undefined)[][] = [];
-  const headerRow1: (string | number)[] = ['指标名称', '计量单位', '代码', '总计'];
-  const headerRow2: (string | number)[] = ['', '', '', ''];
-  const headerRow3: (string | number)[] = ['', '', '', ''];
-  for (const block of catBlocks) {
-    headerRow1[block.startCol] = block.category.label;
-    for (const leaf of block.leaves) {
-      if (block.category.children?.length) {
-        headerRow2[leaf.startCol] = leaf.label;
-      }
-      leaf.projects.forEach((project, index) => {
-        headerRow3[leaf.startCol + index] = project.name;
-      });
-      headerRow3[leaf.endCol] = '小计';
-    }
-  }
-  rows.push(headerRow1, headerRow2, headerRow3);
+/** 指标数据行：固定 3 列（名称/单位/代码）+ 各单元格值 */
+function indicatorRow(item: IndicatorDef, cells: (number | string | undefined)[]): (number | string | undefined)[] {
+  return [item.name, item.unit || undefined, item.code || undefined, ...cells];
+}
 
-  /** 未填与 0 置空(与页面展示一致:不补斜杠、不补 0) */
-  const blankZero = (value: number | string | undefined) => (value === 0 ? undefined : value);
-  for (const item of INDICATORS) {
-    const row: (string | number | undefined)[] = [
-      item.name,
-      item.unit || undefined,
-      item.code || undefined,
-      blankZero(grandTotal(item, periodData)),
-    ];
-    for (const block of catBlocks) {
-      for (const leaf of block.leaves) {
-        for (const project of leaf.projects) {
-          row.push(blankZero(cellValue(item, project)));
-        }
-        row.push(blankZero(tabTotal(item, periodData[leaf.key])));
-      }
-    }
-    rows.push(row);
-  }
-
-  const worksheet: WorkSheet = utils.aoa_to_sheet(rows);
-
-  // ── 合并单元格：固定 4 列纵向合并三行；类目按一级/二级跨列合并 ────────
-  const merges: Range[] = [];
-  for (let col = 0; col < 4; col += 1) {
-    merges.push({ s: { r: 0, c: col }, e: { r: 2, c: col } });
-  }
-  for (const block of catBlocks) {
-    if (block.category.children?.length) {
-      merges.push({ s: { r: 0, c: block.startCol }, e: { r: 0, c: block.endCol } });
-      for (const leaf of block.leaves) {
-        merges.push({ s: { r: 1, c: leaf.startCol }, e: { r: 1, c: leaf.endCol } });
-      }
-    } else {
-      merges.push({ s: { r: 0, c: block.startCol }, e: { r: 1, c: block.endCol } });
-    }
-  }
+function finishSheet(rows: (string | number | undefined)[][], merges: Range[], lastCol: number): WorkSheet {
+  const worksheet = utils.aoa_to_sheet(rows);
   worksheet['!merges'] = merges;
-
-  // ── 列宽 ────────────────────────────────────────────────────────────
   worksheet['!cols'] = Array.from({ length: lastCol + 1 }, (_, col) => {
     if (col === 0) return { wch: 42 };
     if (col === 1) return { wch: 10 };
     if (col === 2) return { wch: 8 };
-    if (col === 3) return { wch: 14 };
     return { wch: 12 };
   });
+  // 全表细边框（xlsx 社区版不支持样式，导出走 xlsx-js-style 分支）
+  const thin = { style: 'thin', color: { rgb: '000000' } };
+  const area = utils.decode_range(worksheet['!ref']!);
+  for (let row = area.s.r; row <= area.e.r; row += 1) {
+    for (let col = area.s.c; col <= area.e.c; col += 1) {
+      const address = utils.encode_cell({ r: row, c: col });
+      // 未填的值在 AOA 中没有单元格对象，补空单元格让边框完整覆盖
+      const cell = ((worksheet[address] as CellObject | undefined) ?? { t: 's', v: '' }) as CellObject;
+      cell.s = { ...(cell.s ?? {}), border: { top: thin, bottom: thin, left: thin, right: thin } };
+      worksheet[address] = cell;
+    }
+  }
+  return worksheet;
+}
+
+/** 固定列（指标名称/计量单位/代码）的两行纵向合并 */
+const fixedColMerges: Range[] = [0, 1, 2].map((col) => ({ s: { r: 0, c: col }, e: { r: 1, c: col } }));
+
+const fixedHeader = ['指标名称', '计量单位', '代码'];
+
+export async function exportProgressFillExcel({ year, quarter, unitName, periodData }: ExportParams): Promise<void> {
+  const sheets: { name: string; worksheet: WorkSheet }[] = [];
+
+  // ── Sheet「总览」：固定 3 列 + 总计 + 每叶子一列小计（叶子顺序 = LEAF_CATEGORIES）──
+  {
+    let nextCol = 4;
+    const catBlocks = DATA_CATEGORIES.map((category) => {
+      const startCol = nextCol;
+      const leaves = (category.children ?? [category]).map((leaf) => ({ key: leaf.key, startCol: nextCol++ }));
+      return { category, leaves, startCol, endCol: nextCol - 1 };
+    });
+    const lastCol = Math.max(nextCol - 1, 3);
+
+    const headerRow1: (string | number)[] = [...fixedHeader, '总计'];
+    const headerRow2: (string | number)[] = ['', '', '', ''];
+    // 总计列与固定 3 列一致，表头纵向合并两行
+    const merges: Range[] = [...fixedColMerges, { s: { r: 0, c: 3 }, e: { r: 1, c: 3 } }];
+    for (const block of catBlocks) {
+      if (block.category.children?.length) {
+        // 嵌套类目：行 1 一级类目跨列，行 2 二级类目名
+        headerRow1[block.startCol] = block.category.label;
+        block.leaves.forEach((leaf) => {
+          headerRow2[leaf.startCol] = LEAF_CATEGORIES.find((candidate) => candidate.key === leaf.key)?.label ?? '';
+        });
+        merges.push({ s: { r: 0, c: block.startCol }, e: { r: 0, c: block.endCol } });
+      } else {
+        // 简单类目：一级类目名纵向合并两行
+        headerRow1[block.startCol] = block.category.label;
+        merges.push({ s: { r: 0, c: block.startCol }, e: { r: 1, c: block.startCol } });
+      }
+    }
+
+    const rows: (string | number | undefined)[][] = [headerRow1, headerRow2];
+    for (const item of INDICATORS) {
+      const cells: (number | string | undefined)[] = [cellOut(item, grandTotal(item, periodData) as number)];
+      for (const leaf of LEAF_CATEGORIES) {
+        cells.push(cellOut(item, tabTotal(item, periodData[leaf.key]) as number));
+      }
+      rows.push(indicatorRow(item, cells));
+    }
+    sheets.push({ name: '总览', worksheet: finishSheet(rows, merges, lastCol) });
+  }
+
+  // ── 每个一级类目一个 sheet ──────────────────────────────────────────
+  for (const category of DATA_CATEGORIES) {
+    const leaves = layoutLeaves(category, periodData, 3);
+    const lastCol = Math.max(leaves[leaves.length - 1]?.endCol ?? 2, 2);
+
+    const headerRow1: (string | number)[] = [...fixedHeader];
+    const headerRow2: (string | number)[] = ['', '', ''];
+    const merges: Range[] = [...fixedColMerges];
+    if (category.children?.length) {
+      // 嵌套类目：行 1 = 二级类目名按「项目列 + 小计」跨列合并（包裹项目）
+      for (const leaf of leaves) {
+        headerRow1[leaf.startCol] = leaf.label;
+        merges.push({ s: { r: 0, c: leaf.startCol }, e: { r: 0, c: leaf.endCol } });
+        leaf.projects.forEach((project, index) => {
+          headerRow2[leaf.startCol + index] = project.name;
+        });
+        headerRow2[leaf.endCol] = '小计';
+      }
+    } else {
+      // 简单类目：行 1 = 类目名跨全部数据列
+      const block = leaves[0];
+      headerRow1[block.startCol] = category.label;
+      merges.push({ s: { r: 0, c: block.startCol }, e: { r: 0, c: block.endCol } });
+      block.projects.forEach((project, index) => {
+        headerRow2[block.startCol + index] = project.name;
+      });
+      headerRow2[block.endCol] = '小计';
+    }
+
+    const rows: (string | number | undefined)[][] = [headerRow1, headerRow2];
+    for (const item of INDICATORS) {
+      const cells: (number | string | undefined)[] = [];
+      for (const leaf of leaves) {
+        for (const project of leaf.projects) {
+          cells.push(cellOut(item, cellValue(item, project) as number));
+        }
+        cells.push(cellOut(item, tabTotal(item, periodData[leaf.key]) as number));
+      }
+      rows.push(indicatorRow(item, cells));
+    }
+    sheets.push({ name: category.label, worksheet: finishSheet(rows, merges, lastCol) });
+  }
 
   const workbook: WorkBook = {
-    SheetNames: ['项目进展填报'],
-    Sheets: { 项目进展填报: worksheet },
+    SheetNames: sheets.map((sheet) => sheet.name),
+    Sheets: Object.fromEntries(sheets.map((sheet) => [sheet.name, sheet.worksheet])),
   };
   const buffer = write(workbook, { bookType: 'xlsx', type: 'array' });
   saveAs(
     new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
-    `项目进展填报_${year}年${quarterLabel(quarter)}.xlsx`,
+    `项目进展填报_${year}年${quarterLabel(quarter)}${unitName ? `_${unitName}` : ''}.xlsx`,
   );
 }

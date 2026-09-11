@@ -8,12 +8,8 @@
     "uninstall": "rimraf node_modules",
     "update": "ncu -u"
   },
-  "dependencies": {
-    "qs": "6.15.0"
-  },
-  "devDependencies": {
-    "@types/qs": "6.15.0"
-  },
+  "dependencies": {},
+  "devDependencies": {},
   "homepage": "https://jeesite.com",
   "repository": {
     "type": "git",

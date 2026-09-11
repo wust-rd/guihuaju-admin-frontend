@@ -739,6 +739,7 @@
       await exportProgressFillExcel({
         year: year.value,
         quarter: quarter.value,
+        unitName: UNITS.find((unit) => unit.code === reportUnit.value)?.name,
         periodData: periodData.value,
       });
       showMessage(`已导出 ${year.value} 年${quarterLabel(quarter.value)}项目进展填报`);

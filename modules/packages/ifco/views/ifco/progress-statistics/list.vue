@@ -28,13 +28,12 @@
           <span class="ml-6 text-gray-500">填报季度</span>
           <Select v-model:value="quarter" :options="QUARTER_OPTIONS" class="ml-2 w-28" @change="loadStat" />
         </div>
-        <a-button @click="handleExport"> 导出 </a-button>
+        <a-button :loading="exporting" @click="handleExport"> 导出 </a-button>
       </div>
     </Card>
 
     <Card :title="tableCardTitle">
       <RadioGroup
-        v-if="allowedUnits.length > 1"
         v-model:value="activeUnit"
         :options="unitOptions"
         option-type="button"
@@ -42,7 +41,7 @@
       />
       <Table
         :columns="tableColumns"
-        :data-source="STAT_ROWS"
+        :data-source="displayRows"
         :loading="loading"
         :scroll="{ x: scrollX, y: TABLE_HEIGHT }"
         :components="TABLE_COMPONENTS"
@@ -73,6 +72,7 @@
     loadProgressStatData,
     quarterLabel,
   } from '@jeesite/ifco/api/ifco/progress-fill';
+  import { exportProgressStatExcel } from './export-excel';
 
   /** 表格行(指标,服务端返回,名称已含缩进) */
   type StatRow = ProgressStatRow;
@@ -103,25 +103,27 @@
 
   // ── 统计范围:全武汉市(全市合计) + 可见报送单位(allowedUnits) ──────────
   const allowedUnits = reactive<{ code: string; name: string }[]>([]);
+  // 单单位账号(区局):不显示"全武汉市"页签,只有本单位;多单位才带全市合计页签
   const unitOptions = computed(() => [
-    { label: '全武汉市', value: 'overview' },
+    ...(allowedUnits.length > 1 ? [{ label: '全武汉市', value: 'overview' }] : []),
     ...allowedUnits.map((unit) => ({ label: unit.name, value: unit.code })),
   ]);
   const activeUnit = ref('overview');
 
-  // ── 统计数据(服务端已聚合) ───────────────────────────────────────────
+  // ── 统计数据(服务端一次聚合;切页签本地取数) ──────────────────────────
   const loading = ref(false);
-  const STAT_ROWS = reactive<StatRow[]>([]);
+  const OVERVIEW_ROWS = reactive<StatRow[]>([]);
+  const UNIT_DATAS = reactive<{ code: string; name: string; rows: StatRow[] }[]>([]);
   const activeUnitName = computed(() => allowedUnits.find((unit) => unit.code === activeUnit.value)?.name ?? null);
+  /** 当前展示行:全武汉市 = overview 合计;单位页签 = 该单位一份(无接口调用) */
+  const displayRows = computed<StatRow[]>(() =>
+    activeUnit.value === 'overview' ? OVERVIEW_ROWS : UNIT_DATAS.find((unit) => unit.code === activeUnit.value)?.rows ?? [],
+  );
 
   async function loadStat() {
     loading.value = true;
     try {
-      const res = await loadProgressStatData(
-        year.value,
-        quarter.value,
-        activeUnit.value === 'overview' ? undefined : activeUnit.value,
-      );
+      const res = await loadProgressStatData(year.value, quarter.value);
       allowedUnits.splice(0, allowedUnits.length, ...res.allowedUnits);
       // 单单位账号(区局):隐藏页签并直接定位到本单位(overview 聚合口径与单单位相同)
       if (allowedUnits.length === 1 && activeUnit.value === 'overview') {
@@ -130,7 +132,8 @@
       if (activeUnit.value !== 'overview' && !res.allowedUnits.some((u) => u.code === activeUnit.value)) {
         activeUnit.value = 'overview';
       }
-      STAT_ROWS.splice(0, STAT_ROWS.length, ...res.rows);
+      OVERVIEW_ROWS.splice(0, OVERVIEW_ROWS.length, ...res.overviewRows);
+      UNIT_DATAS.splice(0, UNIT_DATAS.length, ...res.unitDatas);
     } catch (e: unknown) {
       showMessage(e instanceof Error ? e.message : '加载统计数据失败');
     } finally {
@@ -240,12 +243,41 @@
       LEAF_CATEGORIES.reduce((sum, leaf) => sum + widthFor(leaf.key, 150), 0),
   );
 
-  // 单位切换:重新拉取该单位分表(含代码切换场景)
-  watch(activeUnit, () => loadStat());
+  // 单位切换:本地取数(一次拉取已含全部口径),无需调接口
 
-  // ── 导出(按钮保留,功能待做) ─────────────────────────────────────────
-  function handleExport() {
-    showMessage('导出功能建设中');
+  // ── 导出:单单位=自己一个sheet;全单位=全武汉市汇总+每个报送单位一个sheet;
+  //    数据全部来自已加载的一次 stat/data 响应,零接口调用 ─────────────────
+  const exporting = ref(false);
+
+  async function handleExport() {
+    if (exporting.value || loading.value) return;
+    exporting.value = true;
+    try {
+      if (allowedUnits.length <= 1) {
+        const unit = allowedUnits[0];
+        await exportProgressStatExcel({
+          year: year.value,
+          quarter: quarter.value,
+          unitName: unit?.name,
+          sheets: [{ name: unit?.name ?? '本单位', rows: UNIT_DATAS[0]?.rows ?? [] }],
+        });
+      } else {
+        await exportProgressStatExcel({
+          year: year.value,
+          quarter: quarter.value,
+          unitName: '全武汉市',
+          sheets: [
+            { name: '全武汉市', rows: OVERVIEW_ROWS },
+            ...UNIT_DATAS.map((unit) => ({ name: unit.name, rows: unit.rows })),
+          ],
+        });
+      }
+      showMessage(`已导出 ${year.value} 年${quarterLabel(quarter.value)}项目进展统计`);
+    } catch (e: unknown) {
+      showMessage(e instanceof Error ? e.message : '导出失败');
+    } finally {
+      exporting.value = false;
+    }
   }
 </script>
 
