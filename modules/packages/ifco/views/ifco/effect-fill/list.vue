@@ -1,15 +1,21 @@
 <!--
   ifco —— 项目实施成效填报（/ifco/effect-fill/list）
 
-  与项目进展填报（progress-fill）的结构差异（用户定案）：
+  与项目进展填报（progress-fill）的结构差异（后端定案）：
   - **没有类目维度**：不分一级/二级类目 tab、没有总览 tab；
     一张转置表直接填写各项目的全部成效指标（行 = 全部指标，列 = 项目）。
   - 「一、～八、」八个节标题行仅作长表分组展示（加粗、不填写），不是类目表头；
-  - 「数|面积」双值行(226/227/245/246)拆为「…数」「…面积」两行，共用同一代码；
+  - 「数|面积」双值行(226/227/245/246)：后端拆 a/b 两键，本页合并为一行两个输入框；
   - 全部数据行直接填报（InputNumber），无汇总行/count 行/合计级录入行，
     「其中：/合计中：」仅为名称前缀与视觉层级，不参与自动求和；
-  - 数据按「年份 × 季度 × 报送单位」组织（默认市财政厅），存成效域独立仓库
-    effectFillStore，与进展域互不影响。
+  - 数据按「年份 × 季度 × 报送单位」组织（默认第一个有权限的单位），
+    带入标记成效域独立计数（与进展域互不影响）。
+
+  对接后端 modules/ifco（接口文档 v4 第 4 节）：
+  - 进入页面拉成效指标字典 + 单位（复用进展域字典接口）+ 整包填报数据；
+  - 保存按项目列颗粒度（saveEffectProject，双值拆 a/b 两键提交）；
+    编辑完一列点列头对钩即存，顶部「保存」把全部脏列依次落库；
+  - 删除有 id 的列调 deleteEffectProject；带入调 bringIn（服务端限一次）。
 
   其余约定（列级编辑/新增项目 Modal+自动滚右/带入锁删/空值置空/奇偶淡青列/
   表格区域内滚动 scroll.y+固定指标名称列/Excel 导出）与进展填报一致，见 progress-fill/list.vue 头注释。
@@ -24,22 +30,22 @@
       <div class="flex flex-wrap items-center justify-between gap-y-2">
         <div class="flex items-center">
           <span class="text-gray-500">填报年份</span>
-          <Select v-model:value="year" :options="yearOptions" class="ml-2 w-28" @change="resetEditState" />
+          <Select v-model:value="year" :options="yearOptions" class="ml-2 w-28" @change="handleFilterChange" />
           <span class="ml-6 text-gray-500">填报季度</span>
-          <Select v-model:value="quarter" :options="QUARTER_OPTIONS" class="ml-2 w-28" @change="resetEditState" />
+          <Select v-model:value="quarter" :options="QUARTER_OPTIONS" class="ml-2 w-28" @change="handleFilterChange" />
           <span class="ml-6 text-gray-500">项目报送单位</span>
           <Select
             v-model:value="reportUnit"
             :options="reportUnitOptions"
             placeholder="请选择"
             class="ml-2 w-32"
-            @change="resetEditState"
+            @change="handleFilterChange"
           />
         </div>
         <div class="flex items-center">
           <a-button @click="handleAddProject"> 新增项目 </a-button>
           <a-button class="ml-2" :loading="exporting" @click="handleExport"> 导出 </a-button>
-          <a-button type="primary" class="ml-2" @click="handleSave"> 保存 </a-button>
+          <a-button type="primary" class="ml-2" :loading="saving" @click="handleSave"> 保存 </a-button>
         </div>
       </div>
     </Card>
@@ -47,13 +53,16 @@
     <Card :title="tableCardTitle">
       <template #extra>
         <Tooltip :title="bringInTooltip">
-          <a-button size="small" :disabled="broughtIn" @click="handleBringIn"> 带入上一季度填写的项目列 </a-button>
+          <a-button size="small" :disabled="broughtIn || loading" @click="handleBringIn">
+            带入上一季度填写的项目列
+          </a-button>
         </Tooltip>
       </template>
       <div ref="tableWrapRef">
         <Table
           :columns="tableColumns"
           :data-source="FILL_ROWS"
+          :loading="loading"
           :scroll="{ x: scrollX, y: TABLE_HEIGHT }"
           :components="TABLE_COMPONENTS"
           :pagination="false"
@@ -79,7 +88,7 @@
   </PageWrapper>
 </template>
 <script lang="ts" setup name="ViewsIfcoEffectFillList">
-  import { computed, h, nextTick, reactive, ref, watchEffect } from 'vue';
+  import { computed, h, nextTick, onMounted, reactive, ref } from 'vue';
   import { Card, Input, InputNumber, Modal, Popconfirm, Select, Table, Tooltip } from 'antdv-next';
   import type { TableColumnsType } from 'antdv-next';
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
@@ -88,22 +97,20 @@
   import { dateUtil } from '@jeesite/core/utils/dateUtil';
   import { buildYearItems } from '@jeesite/core/libs/year';
   import type { ProjectColumn } from '@jeesite/ifco/api/ifco/common';
-  import {
-    DEFAULT_REPORT_UNIT,
-    QUARTER_OPTIONS,
-    REPORT_UNITS,
-    quarterLabel,
-    toPeriodKey,
-    prevPeriod,
-  } from '@jeesite/ifco/api/ifco/common';
-  import type { EffectIndicatorDef } from '@jeesite/ifco/api/ifco/effect-fill';
+  import { QUARTER_OPTIONS } from '@jeesite/ifco/api/ifco/common';
+  import type { EffectIndicatorDef, EffectUnitData } from '@jeesite/ifco/api/ifco/effect-fill';
   import {
     EFFECT_INDICATORS,
     EFFECT_INDICATOR_MAP,
+    UNITS,
+    bringInPrevPeriod,
     cellValue,
-    ensureEffectUnitData,
-    getEffectUnitData,
+    deleteEffectProject,
+    ensureEffectDicts,
+    loadEffectFillData,
+    quarterLabel,
     rowTotal,
+    saveEffectProject,
   } from '@jeesite/ifco/api/ifco/effect-fill';
   import ResizableTitle from '@jeesite/core/components/Table/src/components/ResizableTitle.vue';
   import { exportEffectExcel } from './export-excel';
@@ -122,7 +129,6 @@
   // ── 列宽拖拽(复用框架 ResizableTitle,同 sys/empUser):onHeaderCell 注入 resizable 与宽度回写 ──
   const TABLE_COMPONENTS = { header: { cell: ResizableTitle } };
   const colWidths = reactive<Record<string, number>>({});
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const resizableHeaderCell = (col: any): any => ({
     column: { ...col, resizable: true },
     onResize: (_event: MouseEvent, { size }: { size: { width: number } }) => {
@@ -141,32 +147,77 @@
   const year = ref(dateUtil().year());
   // dayjs 的 quarter() 需 quarterOfYear 插件，这里用 month() 推导当前季度
   const quarter = ref(String(Math.floor(dateUtil().month() / 3) + 1));
-  /** 项目报送单位(武汉各行政区,数据维度:切换即切换数据集;默认第一个区) */
-  const reportUnit = ref<string>(DEFAULT_REPORT_UNIT);
-  const reportUnitOptions = REPORT_UNITS.map((name) => ({ label: name, value: name }));
+  /** 项目报送单位(存单位编码;默认第一个有权限的单位) */
+  const reportUnit = ref<string>();
+  const reportUnitOptions = computed(() => UNITS.map((unit) => ({ label: unit.name, value: unit.code })));
 
-  // ── 数据:周期 × 报送单位(成效域独立仓库,懒初始化;无类目维度) ──────────
-  /** 已带入标记:`${周期key}|${单位}` → 是否已带入(各单位独立) */
-  const broughtMap = reactive<Record<string, boolean>>({});
+  // ── 数据加载:字典一次 + (年份×季度×单位)整包(成效域无类目维度) ────────
+  const loading = ref(false);
+  const unitData = ref<EffectUnitData>();
+  const broughtIn = ref(false);
 
-  watchEffect(() => {
-    if (reportUnit.value) {
-      ensureEffectUnitData(toPeriodKey(year.value, quarter.value), reportUnit.value);
+  async function loadFill() {
+    if (!reportUnit.value) return;
+    loading.value = true;
+    try {
+      const res = await loadEffectFillData(year.value, quarter.value, reportUnit.value);
+      unitData.value = res.unitData;
+      broughtIn.value = res.broughtIn;
+    } catch (e: unknown) {
+      showMessage(e instanceof Error ? e.message : '加载成效填报数据失败');
+    } finally {
+      loading.value = false;
     }
+  }
+
+  onMounted(async () => {
+    try {
+      await ensureEffectDicts();
+    } catch (e: unknown) {
+      showMessage(e instanceof Error ? e.message : '加载字典失败');
+      return;
+    }
+    if (!reportUnit.value) reportUnit.value = UNITS[0]?.code;
+    await loadFill();
   });
 
-  const unitData = computed(() => {
-    const unit = reportUnit.value;
-    return unit ? getEffectUnitData(toPeriodKey(year.value, quarter.value), unit) : undefined;
-  });
-
-  // ── 编辑态:同时仅一列 ───────────────────────────────────────────────
+  // ── 编辑态:同时仅一列;脏列跟踪(顶部「保存」统一落库) ─────────────────
   const editingColKey = ref<string>();
+  const saving = ref(false);
   let addSeq = 0;
-  let importSeq = 0;
+  const dirtyCols = new Map<string, ProjectColumn>();
 
   function resetEditState() {
     editingColKey.value = undefined;
+  }
+
+  /** 筛选条件变化:丢弃未保存的编辑并整包重载 */
+  function handleFilterChange() {
+    resetEditState();
+    dirtyCols.clear();
+    loadFill();
+  }
+
+  /** 单列落库:双值行二元组拆回 a/b 两键(仅 fill 行键提交,值全量同步) */
+  async function persistColumn(col: ProjectColumn) {
+    const res = await saveEffectProject({
+      year: year.value,
+      quarter: quarter.value,
+      unit: reportUnit.value!,
+      project: { id: col.id, name: col.name, values: col.values },
+    });
+    if (!col.id) {
+      const tempKey = col.key;
+      col.id = res.projectId;
+      col.key = res.projectId;
+      if (editingColKey.value === tempKey) editingColKey.value = res.projectId;
+      if (colWidths[tempKey] !== undefined) {
+        colWidths[res.projectId] = colWidths[tempKey]!;
+        delete colWidths[tempKey];
+      }
+      dirtyCols.delete(tempKey);
+    }
+    dirtyCols.delete(col.key);
   }
 
   // ── 新增项目:居中 Modal 命名,确认后追加最右列并滚动到位 ──────────────
@@ -185,11 +236,11 @@
       showMessage('请输入项目名称');
       return;
     }
-    const data = currentUnitData();
-    if (!data) return;
+    if (!unitData.value) return;
     addSeq += 1;
-    const col: ProjectColumn = { key: `add-${addSeq}`, name, imported: false, values: {} };
-    data.projects.push(col);
+    const col = reactive<ProjectColumn>({ key: `add-${addSeq}`, name, imported: false, values: {} });
+    unitData.value.projects.push(col);
+    dirtyCols.set(col.key, col);
     addModalOpen.value = false;
     // 新增即填报:直接进入该列编辑,并把表格滚到最右露出新列
     editingColKey.value = col.key;
@@ -201,56 +252,73 @@
     });
   }
 
-  function handleDeleteColumn(col: ProjectColumn) {
-    const data = currentUnitData();
-    if (!data) return;
-    data.projects = data.projects.filter((item) => item.key !== col.key);
+  async function handleDeleteColumn(col: ProjectColumn) {
+    if (!unitData.value) return;
+    if (col.id) {
+      try {
+        await deleteEffectProject(col.id);
+      } catch (e: unknown) {
+        showMessage(e instanceof Error ? e.message : '删除失败');
+        return;
+      }
+    }
+    unitData.value.projects = unitData.value.projects.filter((item) => item.key !== col.key);
+    dirtyCols.delete(col.key);
     if (editingColKey.value === col.key) editingColKey.value = undefined;
   }
 
-  /** 当前单位的数据(懒初始化) */
-  function currentUnitData() {
-    const unit = reportUnit.value;
-    if (!unit) return undefined;
-    return ensureEffectUnitData(toPeriodKey(year.value, quarter.value), unit);
-  }
-
-  // ── 带入上一季度(当前单位;连同数值;二三四带入列不可删,一季度可删) ─────
-  const broughtKey = computed(() => `${toPeriodKey(year.value, quarter.value)}|${reportUnit.value ?? ''}`);
-  const broughtIn = computed(() => broughtMap[broughtKey.value] === true);
+  // ── 带入上一季度(服务端复制;成效域独立计数,每周期×单位限一次) ─────────
   const bringInTooltip = computed(() =>
     quarter.value === '1'
       ? '带入上一年第四季度填报的项目列（含数值，带入列可删除）'
       : '带入本年度上一季度填报的项目列（含数值，带入列不可删除）',
   );
 
-  function handleBringIn() {
-    const unit = reportUnit.value;
-    if (!unit || broughtMap[broughtKey.value]) return;
-    const prev = prevPeriod(year.value, quarter.value);
-    const source = ensureEffectUnitData(toPeriodKey(prev.year, prev.quarter), unit).projects;
-    const current = ensureEffectUnitData(toPeriodKey(year.value, quarter.value), unit);
-    importSeq += 1;
-    current.projects.push(
-      ...source.map((item) => ({
-        key: `${item.key}-imp${importSeq}`,
-        name: item.name,
-        imported: true,
-        // 双值行的二元组需逐格深拷贝,避免两周期共用同一数组引用
-        values: Object.fromEntries(
-          Object.entries(item.values).map(([k, v]) => [k, Array.isArray(v) ? ([...v] as [number, number]) : v]),
-        ),
-      })),
-    );
-    broughtMap[broughtKey.value] = true;
-    resetEditState();
-    showMessage(`已带入 ${prev.year} 年${quarterLabel(prev.quarter)}填报的项目列`);
+  async function handleBringIn() {
+    if (!reportUnit.value || broughtIn.value || loading.value) return;
+    try {
+      const res = await bringInPrevPeriod({
+        year: year.value,
+        quarter: quarter.value,
+        unit: reportUnit.value,
+      });
+      showMessage(
+        `已带入 ${res.fromYear} 年${quarterLabel(res.fromQuarter)}填报的 ${res.broughtProjectCount} 个项目列`,
+      );
+      resetEditState();
+      dirtyCols.clear();
+      await loadFill();
+    } catch (e: unknown) {
+      showMessage(e instanceof Error ? e.message : '带入失败');
+    }
   }
 
-  function handleSave() {
-    // 假数据阶段数值已实时写入内存,保存动作仅退出编辑态并给出反馈
+  /** 顶部保存:把全部脏列依次落库 */
+  async function handleSave() {
+    const dirtyCount = dirtyCols.size;
+    if (!dirtyCount) {
+      resetEditState();
+      showMessage(`暂无修改，${year.value} 年${quarterLabel(quarter.value)}项目实施成效填报数据已是最新`);
+      return;
+    }
+    saving.value = true;
+    let failed = 0;
+    let firstError = '';
+    for (const col of [...dirtyCols.values()]) {
+      try {
+        await persistColumn(col);
+      } catch (e: unknown) {
+        failed += 1;
+        firstError ||= e instanceof Error ? e.message : '保存失败';
+      }
+    }
+    saving.value = false;
     resetEditState();
-    showMessage(`已保存 ${year.value} 年${quarterLabel(quarter.value)}项目实施成效填报`);
+    if (failed > 0) {
+      showMessage(`有 ${failed} 列保存失败：${firstError}`);
+    } else {
+      showMessage(`已保存 ${year.value} 年${quarterLabel(quarter.value)}项目实施成效填报（共 ${dirtyCount} 个项目列）`);
+    }
   }
 
   // ── 导出 ────────────────────────────────────────────────────────────
@@ -271,18 +339,21 @@
     }
   }
 
-  // ── 表格行(全部指标,含节标题行) ─────────────────────────────────────
-  const FILL_ROWS: FillRow[] = EFFECT_INDICATORS.map((item) => ({
-    key: item.key,
-    kind: item.kind,
-    name: item.name,
-    unit: item.unit,
-    code: item.code,
-  }));
+  // ── 表格行(全部指标,含节标题行;字典加载后填充) ──────────────────────
+  const FILL_ROWS = computed<FillRow[]>(() =>
+    EFFECT_INDICATORS.map((item) => ({
+      key: item.key,
+      kind: item.kind,
+      name: item.name,
+      unit: item.unit,
+      code: item.code,
+    })),
+  );
 
   const tableCardTitle = computed(() => {
     const period = `${year.value}年 ${quarterLabel(quarter.value)}`;
-    return reportUnit.value ? `${period} ${reportUnit.value} · 项目实施成效` : `${period} 项目实施成效`;
+    const unitName = UNITS.find((unit) => unit.code === reportUnit.value)?.name;
+    return unitName ? `${period} ${unitName} · 项目实施成效` : `${period} 项目实施成效`;
   });
 
   /** 节标题行(一、～八、)加粗;不落数值 */
@@ -308,6 +379,7 @@
     } else {
       col.values[indicatorKey] = value;
     }
+    dirtyCols.set(col.key, col);
   }
 
   /** 双值格写入:按位落到二元组 */
@@ -316,6 +388,7 @@
     const tuple: [number, number] = Array.isArray(current) ? [...current] : [0, 0];
     tuple[slot] = value ?? 0;
     col.values[indicatorKey] = tuple;
+    dirtyCols.set(col.key, col);
   }
 
   /** 单元格:编辑列内的填报行渲染输入控件(双值行两个框中间固定竖线),其余为只读文本 */
@@ -356,14 +429,14 @@
     return renderDisplay(cellValue(item, col));
   }
 
-  /** 项目列头:「名称 + 编辑/删除图标」;编辑态下的编辑按钮换成保存 icon */
+  /** 项目列头:「名称 + 编辑/删除图标」;编辑态下的编辑按钮换成保存 icon(点击即存该列) */
   function renderProjectHeader(col: ProjectColumn) {
     const editing = editingColKey.value === col.key;
     const deletable = !(col.imported && quarter.value !== '1');
     return h('div', { class: 'flex items-center justify-between gap-1' }, [
       h('span', { class: 'flex-1 truncate text-left', title: col.name }, col.name),
       h('span', { class: 'flex shrink-0 items-center gap-1' }, [
-        h(Tooltip, { title: editing ? '完成编辑' : '编辑本列' }, () =>
+        h(Tooltip, { title: editing ? '完成并保存本列' : '编辑本列' }, () =>
           h(Icon, {
             icon: editing ? 'ant-design:save-outlined' : 'ant-design:edit-outlined',
             class: 'effect-fill-icon-edit',
@@ -382,8 +455,23 @@
     ]);
   }
 
-  function toggleEdit(col: ProjectColumn) {
-    editingColKey.value = editingColKey.value === col.key ? undefined : col.key;
+  /** 进入/退出编辑:退出时该列若有改动立即落库 */
+  async function toggleEdit(col: ProjectColumn) {
+    if (editingColKey.value === col.key) {
+      editingColKey.value = undefined;
+      if (dirtyCols.has(col.key)) {
+        saving.value = true;
+        try {
+          await persistColumn(col);
+        } catch (e: unknown) {
+          showMessage(e instanceof Error ? e.message : '保存失败');
+        } finally {
+          saving.value = false;
+        }
+      }
+      return;
+    }
+    editingColKey.value = col.key;
   }
 
   const tableColumns = computed<TableColumnsType<FillRow>>(() => {

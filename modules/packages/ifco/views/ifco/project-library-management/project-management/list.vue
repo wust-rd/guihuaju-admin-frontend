@@ -178,7 +178,12 @@
     { title: '投资估算(亿元)', dataIndex: 'investEstimate', width: 120, align: 'right' },
     { title: '资金来源', dataIndex: 'fundSourceList', width: 200, slot: 'fundSourceList' },
     { title: '项目归属', dataIndex: 'projectAffiliation', width: 130, slot: 'projectAffiliation' },
-    { title: '行业主管部门', dataIndex: 'industrySupervisionDeptList', width: 160, slot: 'industrySupervisionDeptList' },
+    {
+      title: '行业主管部门',
+      dataIndex: 'industrySupervisionDeptList',
+      width: 160,
+      slot: 'industrySupervisionDeptList',
+    },
     { title: '责任部门', dataIndex: 'responsibleDept', width: 120 },
     { title: '实施主体', dataIndex: 'implementOrgList', width: 160, slot: 'implementOrgList' },
     { title: '统筹主体', dataIndex: 'coordinateOrgList', width: 140, slot: 'coordinateOrgList' },

@@ -1,200 +1,370 @@
 /**
- * ifco —— 项目实施成效填报：指标清单、数据模型与汇总计算
+ * ifco —— 项目实施成效填报/统计：真实接口层（对接 modules/ifco 后端）
  *
- * 纯假数据阶段：数据存模块级内存仓库（effectFillStore，成效填报页与将来的成效统计页
- * 共享；与进展填报的 progressFillStore 相互独立）。后端接入后整体替换为接口读写。
- *
- * 与进展填报的结构差异（用户定案）：成效填报**没有类目维度**——
- * 不分一级/二级类目 tab、没有总览 tab，一张表直接填写各项目的全部指标；
- * 数据按「年份 × 季度 × 报送单位」组织，每个单位只有一份项目列表。
- *
- * 指标清单源自《项目实施成效情况.csv》：
- * - 「一、～八、」8 个节标题行仅作长表分组展示（加粗、不填写），不是类目表头；
- * - 「数|面积」双值行（226/227/245/246）为单行 dual：每格存二元组 [数, 面积]，
- *   编辑时两个输入框，显示/导出用竖线拼接（导出纯数字不带千分位）；
- * - 缩进 = 全角空格数直传（照 CSV 半角空格换算：5→4、20→8、40→12）；
- * - 无汇总行/count 行/合计级录入行：全部数据行均为直接填报，「其中：/合计中：」
- *   仅是名称前缀与视觉层级，不参与任何自动求和。
+ * 契约来源：《接口文档-项目进展填报.md》v4 第 4 节（成效模块）。
+ * 与进展域的结构差异（后端定案）：
+ * - 无类目维度：每「周期 × 单位」只有一份项目列表（无 tabs / 无 saveTotal）；
+ * - 指标含 kind=section 节标题行（一、～八、，加粗展示、不填报、不提交）；
+ * - 双值行拆键：后端 r226a(数)/r226b(面积) 两个独立键；本层加载时按 dualGroup
+ *   合并为一行（key=dualGroup，格值二元组 [数, 面积]），提交时再拆回 a/b 两键；
+ * - 单位清单复用进展域 /progress/dict/units（同一套数据权限映射）；
+ * - 带入标记成效域独立计数（与进展域互不影响）。
  */
 
 import { reactive } from 'vue';
+import { defHttp } from '@jeesite/core/utils/http/axios';
+import { useGlobSetting } from '@jeesite/core/hooks/setting';
 import type { ProjectColumn } from '../common';
-import { SAMPLE_PROJECT_NAMES, hashSeed } from '../common';
+import { ensureProgressDicts, unwrap } from '../progress-fill';
+
+export { UNITS, UNIT_NAME_MAP, ensureProgressDicts } from '../progress-fill';
+export { QUARTER_OPTIONS, quarterLabel } from '../common';
 
 /** 指标行类型：fill=直接填报行；section=节标题行（一、～八、，不填写） */
 export type EffectIndicatorKind = 'fill' | 'section';
 
-/** 指标（表格行）定义 */
+/** 指标（表格行）定义（前端展示形态：name 已含缩进；双值行 dual=true） */
 export type EffectIndicatorDef = {
-  /** 稳定 key（数据行 r<代码>，双值行拆分用 a/b 后缀；节标题行 s1～s8） */
+  /** 稳定 key（数据行 r<代码>，双值行合并后 key=dualGroup 如 r226；节标题行 s1～s8） */
   key: string;
-  /** 指标名称（含层级缩进与「其中：/合计中：」前缀） */
+  /** 指标名称（含层级缩进与「其中：/合计中：」前缀；双值行「…数|面积」） */
   name: string;
-  /** 计量单位（节标题行为空） */
+  /** 计量单位（节标题行为空；双值行「个|平方米」） */
   unit: string;
   /** 指标代码（节标题行为空） */
   code: string;
   /** 行类型 */
   kind: EffectIndicatorKind;
-  /** 双值行（数|面积）：一格存二元组 [数, 面积]，编辑时两个输入框，显示/导出用竖线拼接 */
+  /** 双值行（数|面积）：一格存二元组 [数, 面积]，编辑时两个输入框 */
   dual?: boolean;
 };
 
-/** 单个报送单位在一个周期的成效数据：只有一份项目列表（无类目维度） */
+// ── 服务端 VO ───────────────────────────────────────────────────────
+
+/** GET /effect/fill/indicators 行 */
+type EffectIndicatorVo = {
+  key: string;
+  code: string | null;
+  name: string;
+  level: number;
+  unit: string | null;
+  kind: EffectIndicatorKind;
+  dualGroup: string | null;
+  dualSlot: number | null;
+  sortNo: number;
+};
+
+/** GET /effect/fill/data 的 data */
+type EffectFillDataVo = {
+  year: string;
+  quarter: string;
+  unitCode: string;
+  unitName: string | null;
+  broughtIn: boolean;
+  fillDate: string | null;
+  projects: EffectProjectVo[];
+};
+
+type EffectProjectVo = {
+  id: string;
+  name: string;
+  imported: boolean;
+  createByName?: string | null;
+  createDeptName?: string | null;
+  createDate?: string | null;
+  values: Record<string, number | string | null>;
+};
+
+/** GET /effect/stat/data 的 data */
+type EffectStatDataVo = {
+  year: string;
+  quarter: string;
+  allowedUnits: { code: string; name: string }[];
+  rows: EffectStatRowVo[];
+};
+
+type EffectStatRowVo = {
+  key: string;
+  code: string | null;
+  name: string;
+  level: number;
+  unit: string | null;
+  kind: EffectIndicatorKind;
+  dualGroup: string | null;
+  dualSlot: number | null;
+  total: number | null;
+  units: Record<string, number | null> | null;
+};
+
+const { adminPath } = useGlobSetting();
+const BASE = adminPath + '/ifco/effect';
+
+/** 双值行展示名 b 槽后缀：取与 a 槽名称最长公共前缀之后的余文（如「面积」） */
+function dualSuffix(nameA: string, nameB: string): string {
+  let i = 0;
+  while (i < nameA.length && i < nameB.length && nameA[i] === nameB[i]) i += 1;
+  return nameB.slice(i) || nameB;
+}
+
+/** 指标 VO 序列 → 展示形态（双值相邻两行合并；name 拼缩进） */
+function adaptIndicators(vos: EffectIndicatorVo[]): EffectIndicatorDef[] {
+  const rows: EffectIndicatorDef[] = [];
+  const dualB = new Map<string, EffectIndicatorVo>();
+  for (const vo of vos) {
+    if (vo.dualGroup && vo.dualSlot === 1) dualB.set(vo.dualGroup, vo);
+  }
+  for (const vo of vos) {
+    const indent = '\u3000'.repeat(vo.level || 0);
+    if (vo.dualGroup && vo.dualSlot === 0) {
+      const b = dualB.get(vo.dualGroup);
+      const nameB = b?.name ?? vo.name;
+      rows.push({
+        key: vo.dualGroup,
+        name: `${indent}${vo.name}|${dualSuffix(vo.name, nameB)}`,
+        unit: b?.unit ? `${vo.unit ?? ''}|${b.unit}` : (vo.unit ?? ''),
+        code: vo.code ?? '',
+        kind: 'fill',
+        dual: true,
+      });
+      continue;
+    }
+    if (vo.dualGroup && vo.dualSlot === 1) continue; // 已并入 a 槽行
+    rows.push({
+      key: vo.key,
+      name: indent + vo.name,
+      unit: vo.unit ?? '',
+      code: vo.code ?? '',
+      kind: vo.kind,
+    });
+  }
+  return rows;
+}
+
+// ── 字典状态（模块级单例；单位复用进展域） ────────────────────────────
+
+/** 成效指标清单（59 行 → 合并双值后 55 行；加载前为空数组） */
+export const EFFECT_INDICATORS = reactive<EffectIndicatorDef[]>([]);
+/** 指标 key → 定义 */
+export const EFFECT_INDICATOR_MAP = reactive<Record<string, EffectIndicatorDef>>({});
+
+let dictsPromise: Promise<void> | undefined;
+
+/**
+ * 拉取成效指标（同时确保进展域单位字典就绪，单位下拉共用）。
+ * 并发调用共享同一 Promise；失败后允许重试。
+ */
+export async function ensureEffectDicts(): Promise<void> {
+  if (dictsPromise) return dictsPromise;
+  dictsPromise = (async () => {
+    const [indicatorVos] = await Promise.all([
+      unwrap<EffectIndicatorVo[]>(defHttp.get({ url: BASE + '/fill/indicators' })),
+      ensureProgressDicts(),
+    ]);
+    const rows = adaptIndicators(indicatorVos);
+    EFFECT_INDICATORS.splice(0, EFFECT_INDICATORS.length, ...rows);
+    Object.keys(EFFECT_INDICATOR_MAP).forEach((k) => delete EFFECT_INDICATOR_MAP[k]);
+    for (const item of rows) EFFECT_INDICATOR_MAP[item.key] = item;
+  })().catch((e) => {
+    dictsPromise = undefined;
+    throw e;
+  });
+  return dictsPromise;
+}
+
+// ── 填报数据：整包加载（双值 a/b 两键 → 合并行二元组） ────────────────
+
+/** 后端扁平 values（r226a/r226b 独立键） → 前端 values（r226 = [数, 面积]） */
+function mergeDualValues(
+  vo: EffectProjectVo,
+  dualGroups: Set<string>,
+): Record<string, number | string | [number, number]> {
+  const values: Record<string, number | string | [number, number]> = {};
+  for (const [k, v] of Object.entries(vo.values ?? {})) {
+    if (v === null || v === '' || v === undefined) continue;
+    const m = /^(r\d+)a$/.exec(k);
+    if (m && dualGroups.has(m[1])) {
+      const b = vo.values[`${m[1]}b`];
+      values[m[1]] = [Number(v), b === null || b === undefined || b === '' ? 0 : Number(b)];
+      continue;
+    }
+    if (/^r\d+b$/.test(k)) continue; // b 槽已在 a 槽合并时取走
+    values[k] = v;
+  }
+  return values;
+}
+
+/** 前端 values（含二元组） → 后端扁平 values（拆回 a/b 两键，仅 fill 行键） */
+function splitDualValues(
+  values: Record<string, number | string | [number, number] | undefined>,
+  fillKeys: Set<string>,
+  dualGroups: Set<string>,
+): Record<string, number | string> {
+  const out: Record<string, number | string> = {};
+  for (const [k, v] of Object.entries(values)) {
+    if (v === undefined || v === null || v === '') continue;
+    if (Array.isArray(v)) {
+      if (dualGroups.has(k)) {
+        if (v[0] !== 0) out[`${k}a`] = v[0];
+        if (v[1] !== 0) out[`${k}b`] = v[1];
+      }
+      continue;
+    }
+    if (fillKeys.has(k)) out[k] = v;
+  }
+  return out;
+}
+
+/** 单位一周期成效数据（前端形态） */
 export type EffectUnitData = {
   projects: ProjectColumn[];
 };
 
-/** 成效数据仓库：周期 key（`${year}-Q${quarter}`）→ 报送单位 → 单位数据 */
-export type EffectStore = Record<string, Record<string, EffectUnitData>>;
-
-/** 层级缩进：全角空格数直传 */
-const INDENT = (indent: number) => '\u3000'.repeat(indent);
-
-function row(
-  key: string,
-  indent: number,
-  name: string,
+/** 加载成效填报数据（含 broughtIn 标记） */
+export async function loadEffectFillData(
+  year: number | string,
+  quarter: string,
   unit: string,
-  code = '',
-  kind: EffectIndicatorKind = 'fill',
-  dual = false,
-): EffectIndicatorDef {
-  return { key, name: `${INDENT(indent)}${name}`, unit, code, kind, dual };
+): Promise<{ unitData: EffectUnitData; broughtIn: boolean }> {
+  const vo = await unwrap<EffectFillDataVo>(
+    defHttp.get({
+      url: BASE + '/fill/data',
+      params: { year: String(year), quarter, unit },
+    }),
+  );
+  const dualGroups = new Set(EFFECT_INDICATORS.filter((item) => item.dual).map((item) => item.key));
+  const projects: ProjectColumn[] = (vo.projects ?? []).map((p) => ({
+    key: p.id,
+    name: p.name,
+    imported: p.imported,
+    values: mergeDualValues(p, dualGroups),
+  }));
+  return { unitData: { projects }, broughtIn: vo.broughtIn === true };
 }
 
-function section(key: string, name: string): EffectIndicatorDef {
-  return { key, name, unit: '', code: '', kind: 'section' };
+/** 保存成效项目列（body 无 leafKey；values 只接受 fill 行键，双值拆 a/b） */
+export async function saveEffectProject(params: {
+  year: number | string;
+  quarter: string;
+  unit: string;
+  project: { id?: string; name: string; values: Record<string, number | string | [number, number]> };
+}): Promise<{ projectId: string; projectName: string; sortNo: number }> {
+  const fillKeys = new Set(
+    EFFECT_INDICATORS.filter((item) => item.kind === 'fill' && !item.dual).map((item) => item.key),
+  );
+  const dualGroups = new Set(EFFECT_INDICATORS.filter((item) => item.dual).map((item) => item.key));
+  return unwrap<{ projectId: string; projectName: string; sortNo: number }>(
+    defHttp.postJson({
+      url: BASE + '/fill/saveProject',
+      data: {
+        year: params.year,
+        quarter: params.quarter,
+        unit: params.unit,
+        project: {
+          id: params.project.id ?? null,
+          name: params.project.name,
+          values: splitDualValues(params.project.values, fillKeys, dualGroups),
+        },
+      },
+    }),
+  );
 }
 
-/**
- * 指标清单（行序与《项目实施成效情况.csv》一致，含节标题行）。
- * 双值行拆分：226/227/245/246 → 数(a)/面积(b)两行，共用代码。
- */
-export const EFFECT_INDICATORS: EffectIndicatorDef[] = [
-  section('s1', '一、既有建筑改造利用'),
-  row('r201', 0, '既有建筑改造面积', '平方米', '201'),
-  row('r202', 4, '其中：城镇房屋抗震加固改造面积', '平方米', '202'),
-  row('r203', 8, '城镇预制板危旧住房治理改造面积', '平方米', '203'),
-  row('r204', 4, '其中：既有居住建筑和公共建筑节能改造面积', '平方米', '204'),
-  row('r205', 0, '启动改造城市危旧房数', '套（间）', '205'),
-  section('s2', '二、城镇老旧小区整治改造'),
-  row('r206', 0, '新开工改造小区涉及居民户数', '户', '206'),
-  row('r207', 0, '加装电梯数', '部', '207'),
-  row('r208', 0, '小区老化管线管道改造长度', '公里', '208'),
-  row('r209', 0, '小区新增电动汽车充电桩数', '个', '209'),
-  row('r210', 0, '小区新增公共服务设施数', '个', '210'),
-  section('s3', '三、完整社区建设'),
-  row('r211', 0, '完整社区建设数', '个', '211'),
-  row('r212', 0, '完整社区建设涉及居民户数', '户', '212'),
-  row('r213', 0, '新增社区基本公共服务设施数', '个', '213'),
-  row('r214', 4, '其中：新增老年服务站（老年人日间照料中心、托老所）数', '个', '214'),
-  row('r215', 8, '新增托儿所数', '个', '215'),
-  row('r216', 8, '新增社区食堂数', '个', '216'),
-  row('r217', 0, '新增社区便民商业服务设施数', '个', '217'),
-  row('r218', 0, '新增社区公共活动场地和公共绿地总面积', '平方米', '218'),
-  section('s4', '四、老旧街区、老旧厂区、城中村等更新改造'),
-  row('r219', 0, '老旧街区改造数', '个', '219'),
-  row('r220', 0, '老旧街区改造和新增产业空间面积', '平方米', '220'),
-  row('r221', 4, '其中：商业服务设施面积', '平方米', '221'),
-  row('r222', 0, '老旧厂区改造数', '个', '222'),
-  row('r223', 0, '老旧厂区改造和新增产业空间面积', '平方米', '223'),
-  row('r224', 4, '其中：商业服务设施面积', '平方米', '224'),
-  row('r225', 0, '启动改造城中村村（居）民户数', '户', '225'),
-  section('s5', '五、城市功能完善'),
-  row('r226', 0, '新增城市公共服务设施数|面积', '个|平方米', '226', 'fill', true),
-  row('r227', 4, '其中：全民健身场地设施建设改造数|面积', '个|平方米', '227', 'fill', true),
-  row('r228', 0, '城市公共空间建设面积', '平方米', '228'),
-  section('s6', '六、城市基础设施建设改造'),
-  row('r229', 0, '城市地下管线管网改造和新增长度', '公里', '229'),
-  row('r230', 4, '其中：燃气管道长度', '公里', '230'),
-  row('r231', 8, '供热管道长度', '公里', '231'),
-  row('r232', 8, '供水管道长度', '公里', '232'),
-  row('r233', 8, '排水管道长度', '公里', '233'),
-  row('r234', 8, '合计中：污水管道长度', '公里', '234'),
-  row('r235', 12, '雨水管道长度', '公里', '235'),
-  row('r236', 12, '雨污合流管道长度', '公里', '236'),
-  row('r237', 0, '地下综合管廊新建长度', '公里', '237'),
-  row('r238', 0, '城市道路改造长度', '公里', '238'),
-  row('r239', 0, '城市桥梁改造数', '座', '239'),
-  row('r240', 0, '新增停车位数', '个', '240'),
-  row('r241', 0, '生活垃圾中转站改造和新增能力', '吨/日', '241'),
-  section('s7', '七、城市生态修复'),
-  row('r242', 0, '改造和新增城市绿道长度', '公里', '242'),
-  row('r243', 0, '改造和新增口袋公园数', '个', '243'),
-  section('s8', '八、城市历史文化保护传承'),
-  row('r244', 0, '历史文化街区保护提升（修复）数', '片', '244'),
-  row('r245', 0, '历史建筑修缮数|面积', '处|平方米', '245', 'fill', true),
-  row('r246', 0, '历史建筑活化利用数|面积', '处|平方米', '246', 'fill', true),
-  row('r247', 0, '城市历史文化保护传承涉及居民户数', '户', '247'),
-];
+/** 删除成效项目列 */
+export async function deleteEffectProject(id: string): Promise<{ projectName: string }> {
+  return unwrap<{ projectName: string }>(
+    defHttp.post({ url: BASE + `/fill/deleteProject?id=${encodeURIComponent(id)}` }),
+  );
+}
 
-export const EFFECT_INDICATOR_MAP: Record<string, EffectIndicatorDef> = Object.fromEntries(
-  EFFECT_INDICATORS.map((item) => [item.key, item]),
-);
+/** 成效带入上一季度（与进展域带入次数互不影响） */
+export async function bringInPrevPeriod(params: {
+  year: number | string;
+  quarter: string;
+  unit: string;
+}): Promise<{ broughtProjectCount: number; fromYear: string; fromQuarter: string }> {
+  return unwrap<{ broughtProjectCount: number; fromYear: string; fromQuarter: string }>(
+    defHttp.postJson({ url: BASE + '/fill/bringIn', data: params }),
+  );
+}
 
-/** 示例值区间按计量单位（成效指标全部为量数行） */
-const UNIT_SAMPLE_RANGES: Record<string, [number, number]> = {
-  平方米: [500, 80000],
-  个: [1, 300],
-  户: [50, 5000],
-  部: [1, 80],
-  '套（间）': [10, 800],
-  公里: [1, 60],
-  座: [1, 30],
-  处: [1, 120],
-  片: [1, 8],
-  '吨/日': [10, 600],
+// ── 统计（服务端已聚合；双值两行合并为二元组展示） ────────────────────
+
+/** 统计展示行：普通行 value = 单位合计；双值行 = [数, 面积]；节标题行恒空 */
+export type EffectStatRow = {
+  key: string;
+  kind: EffectIndicatorKind;
+  name: string;
+  unit: string;
+  code: string;
+  dual?: boolean;
+  /** 全武汉市合计（= 可见单位合计；节标题行 undefined） */
+  total: number | [number, number] | undefined;
+  /** 单位编码 → 该单位合计（双值行为二元组） */
+  units: Record<string, number | [number, number] | undefined>;
 };
 
-function sampleSingleValue(unit: string, seed: number): number {
-  const [min, max] = UNIT_SAMPLE_RANGES[unit] ?? [1, 100];
-  return min + (seed % (max - min + 1));
-}
+/** 成效统计数据 */
+export type EffectStatData = {
+  allowedUnits: { code: string; name: string }[];
+  rows: EffectStatRow[];
+};
 
-function sampleCellValue(tabKey: string, columnKey: string, item: EffectIndicatorDef): number | [number, number] {
-  const base = `${tabKey}|${columnKey}|${item.key}`;
-  if (item.dual) {
-    // 双值行按位取值：单位串「个|平方米」拆成两槽各自的量级
-    const [unitA = '个', unitB = '平方米'] = item.unit.split('|');
-    return [sampleSingleValue(unitA, hashSeed(`${base}#0`)), sampleSingleValue(unitB, hashSeed(`${base}#1`))];
-  }
-  return sampleSingleValue(item.unit, hashSeed(base));
-}
-
-/** 示例项目列（20 列，A1…G2），为全部填报行生成示例值 */
-export function createEffectSampleProjects(unit: string): ProjectColumn[] {
-  return SAMPLE_PROJECT_NAMES.map((name) => {
-    const key = `${unit}-${name}`;
-    const values: Record<string, number | string | [number, number]> = {};
-    for (const item of EFFECT_INDICATORS) {
-      if (item.kind === 'section') continue;
-      values[item.key] = sampleCellValue(unit, key, item);
+/** 成效统计（单位维度即表格列；无 unit 参数） */
+export async function loadEffectStatData(year: number | string, quarter: string): Promise<EffectStatData> {
+  const vo = await unwrap<EffectStatDataVo>(
+    defHttp.get({ url: BASE + '/stat/data', params: { year: String(year), quarter } }),
+  );
+  // 双值行两两合并：a 行取数、b 行取面积
+  const rows: EffectStatRow[] = [];
+  const byGroup = new Map<string, { a?: EffectStatRowVo; b?: EffectStatRowVo }>();
+  for (const r of vo.rows ?? []) {
+    if (r.dualGroup) {
+      const slot = byGroup.get(r.dualGroup) ?? {};
+      if (r.dualSlot === 0) slot.a = r;
+      else slot.b = r;
+      byGroup.set(r.dualGroup, slot);
     }
-    return { key, name, imported: false, values };
-  });
-}
-
-// ── 内存假数据仓库（模块级单例，与进展域 progressFillStore 相互独立） ──
-export const effectFillStore: EffectStore = reactive({});
-
-/** 取某周期某报送单位的数据（懒初始化：首次访问生成 20 列示例数据） */
-export function ensureEffectUnitData(periodKey: string, unit: string): EffectUnitData {
-  if (!effectFillStore[periodKey]) {
-    effectFillStore[periodKey] = {};
   }
-  if (!effectFillStore[periodKey]![unit]) {
-    effectFillStore[periodKey]![unit] = { projects: createEffectSampleProjects(unit) };
+  for (const r of vo.rows ?? []) {
+    const indent = '\u3000'.repeat(r.level || 0);
+    if (r.dualGroup && r.dualSlot === 0) {
+      const pair = byGroup.get(r.dualGroup)!;
+      const b = pair.b;
+      const units: Record<string, number | [number, number] | undefined> = {};
+      for (const u of vo.allowedUnits ?? []) {
+        units[u.code] = [r.units?.[u.code] ?? 0, b?.units?.[u.code] ?? 0];
+      }
+      rows.push({
+        key: r.dualGroup,
+        kind: 'fill',
+        name: `${indent}${r.name}|${dualSuffix(r.name, b?.name ?? r.name)}`,
+        unit: b?.unit ? `${r.unit ?? ''}|${b.unit}` : (r.unit ?? ''),
+        code: r.code ?? '',
+        dual: true,
+        total: [r.total ?? 0, b?.total ?? 0],
+        units,
+      });
+      continue;
+    }
+    if (r.dualGroup && r.dualSlot === 1) continue;
+    const units: Record<string, number | [number, number] | undefined> = {};
+    for (const u of vo.allowedUnits ?? []) {
+      units[u.code] = r.units?.[u.code] ?? undefined;
+    }
+    rows.push({
+      key: r.key,
+      kind: r.kind,
+      name: indent + r.name,
+      unit: r.unit ?? '',
+      code: r.code ?? '',
+      total: r.kind === 'section' ? undefined : (r.total ?? undefined),
+      units,
+    });
   }
-  return effectFillStore[periodKey]![unit];
+  return { allowedUnits: vo.allowedUnits ?? [], rows };
 }
 
-/** 只读取某周期某报送单位的数据（不触发懒初始化） */
-export function getEffectUnitData(periodKey: string, unit: string): EffectUnitData | undefined {
-  return effectFillStore[periodKey]?.[unit];
-}
-
-// ── 取值与汇总（全部数据行为直接填报，节标题行恒为空） ─────────────────
+// ── 展示口径：行合计（填报页「合计」列由前端实时计算） ────────────────
 
 /** 单元格取值：双值行返回二元组；填报行 = 已填值；节标题行不落单元格 */
 export function cellValue(
@@ -230,32 +400,6 @@ export function rowTotal(
   let sum = 0;
   for (const column of data?.projects ?? []) {
     const value = cellValue(item, column);
-    if (typeof value === 'number') sum += value;
-  }
-  return sum;
-}
-
-/** 统计口径：一批单位聚合后的行合计（双值行按位求和返回二元组；节标题行无合计） */
-export function rowTotalOfUnits(
-  item: EffectIndicatorDef,
-  units: EffectUnitData[],
-): number | [number, number] | undefined {
-  if (item.kind === 'section') return undefined;
-  if (item.dual) {
-    let sumA = 0;
-    let sumB = 0;
-    for (const data of units) {
-      const value = rowTotal(item, data);
-      if (Array.isArray(value)) {
-        sumA += value[0];
-        sumB += value[1];
-      }
-    }
-    return [sumA, sumB];
-  }
-  let sum = 0;
-  for (const data of units) {
-    const value = rowTotal(item, data);
     if (typeof value === 'number') sum += value;
   }
   return sum;

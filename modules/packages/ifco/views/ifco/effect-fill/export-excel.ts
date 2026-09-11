@@ -55,13 +55,7 @@ export async function exportEffectExcel({ year, quarter, unitData }: ExportParam
   const worksheet: WorkSheet = utils.aoa_to_sheet(rows);
 
   // ── 列宽 ────────────────────────────────────────────────────────────
-  worksheet['!cols'] = [
-    { wch: 42 },
-    { wch: 10 },
-    { wch: 8 },
-    { wch: 14 },
-    ...projects.map(() => ({ wch: 12 })),
-  ];
+  worksheet['!cols'] = [{ wch: 42 }, { wch: 10 }, { wch: 8 }, { wch: 14 }, ...projects.map(() => ({ wch: 12 }))];
 
   const workbook: WorkBook = {
     SheetNames: ['项目实施成效填报'],

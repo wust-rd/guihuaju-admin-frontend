@@ -143,7 +143,10 @@ export const FUND_SOURCE_ALL = FUND_SOURCE_OPTIONS.flatMap((group) => group.opti
 export const INDUSTRY_SUPERVISION_DEPT_LIST = ['市住更局', '市财政局', '市水务局', '市发改委'];
 
 /** 责任部门（假数据：各区住更局 + 市级行业主管部门；转库申请的主审单位） */
-export const RESPONSIBLE_DEPT_LIST = [...REPORT_UNITS.map((name) => `${name}住更局`), ...INDUSTRY_SUPERVISION_DEPT_LIST];
+export const RESPONSIBLE_DEPT_LIST = [
+  ...REPORT_UNITS.map((name) => `${name}住更局`),
+  ...INDUSTRY_SUPERVISION_DEPT_LIST,
+];
 
 /** 统筹主体（假数据；候选清单由工具栏「配置统筹主体/实施主体」维护，接口待接入） */
 export const COORDINATE_ORG_LIST = ['市发改委', '市财政局'];
@@ -359,14 +362,7 @@ export const LIBRARY_CARDS: LibraryCard[] = [
 ];
 
 /** 最新项目状态选项 */
-export const STATUS_OPTIONS = [
-  '待提交',
-  '待储备库审核',
-  '待储备库回收',
-  '已提交',
-  '待重新预提交',
-  '已退出',
-];
+export const STATUS_OPTIONS = ['待提交', '待储备库审核', '待储备库回收', '已提交', '待重新预提交', '已退出'];
 
 /** 各状态可用操作（设计稿：操作列按钮随项目状态变化） */
 export const ACTIONS_BY_STATUS: Record<string, string[]> = {
@@ -604,11 +600,17 @@ export const PROJECTS: ProjectLibraryItem[] = [
     const fiveReformType = pick(FIVE_REFORM_TYPE_OPTIONS, i).value;
     return {
       projectCode: String(20263555 - i),
-      projectName: GEN_NAMES[i % GEN_NAMES.length] + (i < GEN_NAMES.length ? '' : i < GEN_NAMES.length * 2 ? '（二期）' : '（三期）'),
+      projectName:
+        GEN_NAMES[i % GEN_NAMES.length] +
+        (i < GEN_NAMES.length ? '' : i < GEN_NAMES.length * 2 ? '（二期）' : '（三期）'),
       projectApprovalCode: i % 3 === 0 ? `2310-420103-04-01-6704${String(100 + i)}` : '',
       district,
       projectAffiliation: affiliation,
-      renewalAreaName: cityArea ? cityArea.name : affiliation === 'district-area' ? pick(DISTRICT_RENEWAL_AREA_LIST, i) : '',
+      renewalAreaName: cityArea
+        ? cityArea.name
+        : affiliation === 'district-area'
+          ? pick(DISTRICT_RENEWAL_AREA_LIST, i)
+          : '',
       functionOrientationList: cityArea ? cityArea.orientationList : [],
       renewalAreaBatch: cityArea ? cityArea.batch : '',
       fiveReformType,
@@ -641,8 +643,9 @@ export const PROJECTS: ProjectLibraryItem[] = [
       // 立项审批或核准备案文件：i%3===0 的行预置 1-2 个文件
       ...(i % 3 === 0
         ? {
-            projectApprovalOrFilingFileList: (
-              i % 6 === 0 ? GEN_APPROVAL_FILE_NAMES.slice(0, 2) : GEN_APPROVAL_FILE_NAMES.slice(0, 1)
+            projectApprovalOrFilingFileList: (i % 6 === 0
+              ? GEN_APPROVAL_FILE_NAMES.slice(0, 2)
+              : GEN_APPROVAL_FILE_NAMES.slice(0, 1)
             ).slice(),
           }
         : {}),
@@ -663,7 +666,10 @@ export const PROJECTS: ProjectLibraryItem[] = [
               org,
               (i + seed + k) % 4 === 3
                 ? { result: '', opinion: '' }
-                : { result: pick(REVIEW_RESULT_OPTIONS, i + seed + k), opinion: (i + seed + k) % 2 === 0 ? '材料齐备，同意通过。' : '' },
+                : {
+                    result: pick(REVIEW_RESULT_OPTIONS, i + seed + k),
+                    opinion: (i + seed + k) % 2 === 0 ? '材料齐备，同意通过。' : '',
+                  },
             ]),
           );
         }
@@ -681,7 +687,8 @@ export const PROJECTS: ProjectLibraryItem[] = [
 /** 本地过滤（无后端：查询/重置/统计卡点选都走这里） */
 export function filterProjects(params: ProjectLibraryQuery): ProjectLibraryItem[] {
   const keyword = (params.projectName ?? '').trim();
-  const year = params.inLibraryYear === undefined || params.inLibraryYear === '' ? undefined : String(params.inLibraryYear);
+  const year =
+    params.inLibraryYear === undefined || params.inLibraryYear === '' ? undefined : String(params.inLibraryYear);
   return PROJECTS.filter(
     (item) =>
       (!params.library || item.library === params.library) &&

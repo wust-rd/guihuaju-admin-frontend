@@ -101,5 +101,4 @@ export type AreaPolygonProps = PolygonPropsBase & {
 
 /** 当前选中的面（地图点击查询构造：kind 区分项目地块 / 片区范围，props 为 GeoJSON 原始属性；discriminated union） */
 export type SelectedPolygon =
-  | { kind: 'project'; props: ProjectPolygonProps }
-  | { kind: 'area'; props: AreaPolygonProps };
+  { kind: 'project'; props: ProjectPolygonProps } | { kind: 'area'; props: AreaPolygonProps };

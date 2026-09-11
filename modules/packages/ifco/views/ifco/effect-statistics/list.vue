@@ -3,14 +3,15 @@
 
   页面结构:Card 工具栏(填报年份/填报季度 | 导出[按钮保留,功能待做])
   → 只读汇总表格:行 = 全部成效指标(含「一、～八、」节标题行,加粗不落数值),
-    列 = 指标名称(固定) | 计量单位 | 代码 | 全武汉市 | 13 个行政区报送单位。
+    列 = 指标名称(固定) | 计量单位 | 代码 | 全武汉市 | 可见报送单位。
 
-  口径:
-  - 只展示汇总,整页只读(无编辑/新增/带入/保存);
-  - 全武汉市列 = 全部报送单位合计;各区列 = 该区填报数据的行合计;
-  - 与成效填报页共享内存假数据仓库 effectFillStore
-    (@jeesite/ifco/api/ifco/effect-fill,填报页改动在本页即时可见;后端接入后整体替换);
-  - 空值与 0 置空(不补斜杠、不补 0),数值千分位。
+  口径(对接后端 modules/ifco):
+  - 汇总全部在服务端算好(GET /ifco/effect/stat/data),本页直接渲染,无本地聚合;
+  - 单位列来自返回的 allowedUnits(已按数据权限过滤):区县账号 1 列,市局 13 列;
+  - 全武汉市列 = rows[].total(可见单位合计);单位列 = rows[].units[code];
+  - 双值行(226/227/245/246)后端 a/b 两行,本页按 dualGroup 合并为一行
+    「数 | 面积」二元组展示;
+  - 空值与 0 置空(不补斜杠、不补 0)。
 
   菜单注册(菜单名称「项目成效统计」):
    - 链接地址:/ifco/effect-statistics/list
@@ -22,9 +23,9 @@
       <div class="flex flex-wrap items-center justify-between gap-y-2">
         <div class="flex items-center">
           <span class="text-gray-500">填报年份</span>
-          <Select v-model:value="year" :options="yearOptions" class="ml-2 w-28" />
+          <Select v-model:value="year" :options="yearOptions" class="ml-2 w-28" @change="loadStat" />
           <span class="ml-6 text-gray-500">填报季度</span>
-          <Select v-model:value="quarter" :options="QUARTER_OPTIONS" class="ml-2 w-28" />
+          <Select v-model:value="quarter" :options="QUARTER_OPTIONS" class="ml-2 w-28" @change="loadStat" />
         </div>
         <a-button @click="handleExport"> 导出 </a-button>
       </div>
@@ -34,6 +35,7 @@
       <Table
         :columns="tableColumns"
         :data-source="STAT_ROWS"
+        :loading="loading"
         :scroll="{ x: scrollX, y: TABLE_HEIGHT }"
         :components="TABLE_COMPONENTS"
         :pagination="false"
@@ -45,7 +47,7 @@
   </PageWrapper>
 </template>
 <script lang="ts" setup name="ViewsIfcoEffectStatisticsList">
-  import { computed, reactive, ref } from 'vue';
+  import { computed, onMounted, reactive, ref } from 'vue';
   import { Card, Select, Table } from 'antdv-next';
   import type { TableColumnsType } from 'antdv-next';
   import ResizableTitle from '@jeesite/core/components/Table/src/components/ResizableTitle.vue';
@@ -53,31 +55,15 @@
   import { PageWrapper } from '@jeesite/core/components/Page';
   import { dateUtil } from '@jeesite/core/utils/dateUtil';
   import { buildYearItems } from '@jeesite/core/libs/year';
-  import type { EffectIndicatorDef, EffectUnitData } from '@jeesite/ifco/api/ifco/effect-fill';
-  import {
-    EFFECT_INDICATORS,
-    EFFECT_INDICATOR_MAP,
-    ensureEffectUnitData,
-    rowTotal,
-    rowTotalOfUnits,
-  } from '@jeesite/ifco/api/ifco/effect-fill';
-  import { QUARTER_OPTIONS, REPORT_UNITS, quarterLabel, toPeriodKey } from '@jeesite/ifco/api/ifco/common';
-
-  /** 表格行(指标) */
-  type StatRow = {
-    key: string;
-    kind: EffectIndicatorDef['kind'];
-    name: string;
-    unit: string;
-    code: string;
-  };
+  import { QUARTER_OPTIONS } from '@jeesite/ifco/api/ifco/common';
+  import type { EffectStatRow } from '@jeesite/ifco/api/ifco/effect-fill';
+  import { loadEffectStatData, quarterLabel } from '@jeesite/ifco/api/ifco/effect-fill';
 
   const { showMessage } = useMessage();
 
   // ── 列宽拖拽(复用框架 ResizableTitle,同 sys/empUser):onHeaderCell 注入 resizable 与宽度回写 ──
   const TABLE_COMPONENTS = { header: { cell: ResizableTitle } };
   const colWidths = reactive<Record<string, number>>({});
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const resizableHeaderCell = (col: any): any => ({
     column: { ...col, resizable: true },
     onResize: (_event: MouseEvent, { size }: { size: { width: number } }) => {
@@ -97,25 +83,32 @@
   // dayjs 的 quarter() 需 quarterOfYear 插件，这里用 month() 推导当前季度
   const quarter = ref(String(Math.floor(dateUtil().month() / 3) + 1));
 
-  /** 各报送单位的数据集(懒初始化;全武汉市列 = 全部单位合计) */
-  const unitDatas = computed<EffectUnitData[]>(() => {
-    const key = toPeriodKey(year.value, quarter.value);
-    return REPORT_UNITS.map((unit) => ensureEffectUnitData(key, unit));
+  // ── 统计数据(服务端已聚合;单位维度即表格列) ──────────────────────────
+  const loading = ref(false);
+  const STAT_ROWS = reactive<EffectStatRow[]>([]);
+  const unitColumnsData = reactive<{ code: string; name: string }[]>([]);
+
+  async function loadStat() {
+    loading.value = true;
+    try {
+      const res = await loadEffectStatData(year.value, quarter.value);
+      unitColumnsData.splice(0, unitColumnsData.length, ...res.allowedUnits);
+      STAT_ROWS.splice(0, STAT_ROWS.length, ...res.rows);
+    } catch (e: unknown) {
+      showMessage(e instanceof Error ? e.message : '加载成效统计数据失败');
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  onMounted(() => {
+    loadStat();
   });
 
   const tableCardTitle = computed(() => `${year.value}年 ${quarterLabel(quarter.value)} 项目实施成效统计`);
 
-  // ── 表格行(全部指标,含节标题行) ─────────────────────────────────────
-  const STAT_ROWS: StatRow[] = EFFECT_INDICATORS.map((item) => ({
-    key: item.key,
-    kind: item.kind,
-    name: item.name,
-    unit: item.unit,
-    code: item.code,
-  }));
-
   /** 节标题行加粗;全武汉市列数值加粗(全市口径) */
-  const rowOnCell = (record: StatRow, columnKey?: string) => ({
+  const rowOnCell = (record: EffectStatRow, columnKey?: string) => ({
     className:
       [
         record.kind === 'section' ? 'effect-stat-row-section' : undefined,
@@ -137,28 +130,26 @@
     return typeof value === 'number' ? String(value) : value;
   }
 
-  const tableColumns = computed<TableColumnsType<StatRow>>(() => {
-    /** 全武汉市列:全部单位行合计之和 */
-    const cityColumn: TableColumnsType<StatRow>[number] = {
+  const tableColumns = computed<TableColumnsType<EffectStatRow>>(() => {
+    /** 全武汉市列:可见单位合计(服务端 rows[].total) */
+    const cityColumn: TableColumnsType<EffectStatRow>[number] = {
       key: 'city',
       title: '全武汉市',
       width: widthFor('city', 200),
       align: 'right',
       onHeaderCell: resizableHeaderCell,
-      onCell: (record: StatRow) => rowOnCell(record, 'city'),
-      render: (_value: unknown, record: StatRow) =>
-        renderDisplay(rowTotalOfUnits(EFFECT_INDICATOR_MAP[record.key]!, unitDatas.value)),
+      onCell: (record: EffectStatRow) => rowOnCell(record, 'city'),
+      render: (_value: unknown, record: EffectStatRow) => renderDisplay(record.total),
     };
-    /** 各区列:该区填报数据的行合计 */
-    const unitColumns: TableColumnsType<StatRow> = REPORT_UNITS.map((unit, index) => ({
-      key: unit,
-      title: unit,
-      width: widthFor(unit, 200),
+    /** 各单位列:该单位行合计(服务端 rows[].units[code];双值行二元组) */
+    const unitColumns: TableColumnsType<EffectStatRow> = unitColumnsData.map((unit) => ({
+      key: unit.code,
+      title: unit.name,
+      width: widthFor(unit.code, 200),
       align: 'right',
       onHeaderCell: resizableHeaderCell,
-      onCell: (record: StatRow) => rowOnCell(record),
-      render: (_value: unknown, record: StatRow) =>
-        renderDisplay(rowTotal(EFFECT_INDICATOR_MAP[record.key]!, unitDatas.value[index])),
+      onCell: (record: EffectStatRow) => rowOnCell(record),
+      render: (_value: unknown, record: EffectStatRow) => renderDisplay(record.units[unit.code]),
     }));
     return [
       {
@@ -201,7 +192,7 @@
       widthFor('unit', 90) +
       widthFor('code', 80) +
       widthFor('city', 200) +
-      REPORT_UNITS.reduce((sum, unit) => sum + widthFor(unit, 200), 0),
+      unitColumnsData.reduce((sum, unit) => sum + widthFor(unit.code, 200), 0),
   );
 
   // ── 导出(按钮保留,功能待做) ─────────────────────────────────────────

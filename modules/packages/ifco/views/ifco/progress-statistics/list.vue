@@ -2,18 +2,17 @@
   ifco —— 项目进展统计（/ifco/progress-statistics/list）
 
   页面结构:Card 工具栏(填报年份/填报季度 | 导出[按钮保留,功能待做])
-  → RadioGroup(全武汉市 + 13 个行政区报送单位,按钮样式可换行)
+  → RadioGroup(全武汉市 + 可见报送单位,按钮样式可换行)
   → 只读转置表格:行 = 指标,列 = 类目(与填报页总览同构:
     固定左四列 + 7 个简单类目单列 + 嵌套类目拆三个二级子列 + 最左总计)。
 
-  口径:
-  - 只查询 + 导出,整页只读(无编辑/新增/带入/保存);
-  - 点报送单位 = 该单位的分表(等同填报页选中该单位时的总览);
-  - 点「全武汉市」= 全部报送单位合计(全市口径);
-  - count 行(城市更新项目总数) = 范围内各单位项目列数之和;
-    total 行(新增就业岗位) = 范围内各单位录入值之和;汇总行随构成行求和;
-  - 数据与填报页共享同一份内存假数据仓库
-    (@jeesite/ifco/api/ifco/progress-fill 的 progressFillStore,后端接入后整体替换)。
+  口径(对接后端 modules/ifco):
+  - 汇总全部在服务端算好(GET /ifco/progress/stat/data),本页直接渲染,无本地聚合;
+  - 单位页签来自返回的 allowedUnits(已按数据权限过滤):「全武汉市」= 可见单位合计
+    (不传 unit 参数),区县账号只有本区;
+  - 行值:rows[].categories[叶子类目key] = 该类目合计(fill=SUM/total=录入值/
+    count=项目列数/sum=构成求和/text=空),rows[].grand = 总计;
+  - 只查询 + 导出,整页只读(无编辑/新增/带入/保存)。
 
   菜单注册(菜单名称「项目进展统计」):
    - 链接地址:/ifco/progress-statistics/list
@@ -25,9 +24,9 @@
       <div class="flex flex-wrap items-center justify-between gap-y-2">
         <div class="flex items-center">
           <span class="text-gray-500">填报年份</span>
-          <Select v-model:value="year" :options="yearOptions" class="ml-2 w-28" />
+          <Select v-model:value="year" :options="yearOptions" class="ml-2 w-28" @change="loadStat" />
           <span class="ml-6 text-gray-500">填报季度</span>
-          <Select v-model:value="quarter" :options="QUARTER_OPTIONS" class="ml-2 w-28" />
+          <Select v-model:value="quarter" :options="QUARTER_OPTIONS" class="ml-2 w-28" @change="loadStat" />
         </div>
         <a-button @click="handleExport"> 导出 </a-button>
       </div>
@@ -43,6 +42,7 @@
       <Table
         :columns="tableColumns"
         :data-source="STAT_ROWS"
+        :loading="loading"
         :scroll="{ x: scrollX, y: TABLE_HEIGHT }"
         :components="TABLE_COMPONENTS"
         :pagination="false"
@@ -54,7 +54,7 @@
   </PageWrapper>
 </template>
 <script lang="ts" setup name="ViewsIfcoProgressStatisticsList">
-  import { computed, reactive, ref } from 'vue';
+  import { computed, onMounted, reactive, ref, watch } from 'vue';
   import { Card, RadioGroup, Select, Table } from 'antdv-next';
   import type { TableColumnsType } from 'antdv-next';
   import ResizableTitle from '@jeesite/core/components/Table/src/components/ResizableTitle.vue';
@@ -62,36 +62,25 @@
   import { PageWrapper } from '@jeesite/core/components/Page';
   import { dateUtil } from '@jeesite/core/utils/dateUtil';
   import { buildYearItems } from '@jeesite/core/libs/year';
-  import type { CategoryDef, IndicatorDef, PeriodFillData } from '@jeesite/ifco/api/ifco/progress-fill';
+  import type { CategoryDef } from '@jeesite/ifco/api/ifco/progress-fill';
+  import type { ProgressStatRow } from '@jeesite/ifco/api/ifco/progress-fill';
   import {
     DATA_CATEGORIES,
-    INDICATORS,
-    INDICATOR_MAP,
     LEAF_CATEGORIES,
     QUARTER_OPTIONS,
-    REPORT_UNITS,
-    ensureUnitPeriodData,
-    grandTotalOfUnits,
+    ensureProgressDicts,
+    loadProgressStatData,
     quarterLabel,
-    tabTotalOfUnits,
-    toPeriodKey,
   } from '@jeesite/ifco/api/ifco/progress-fill';
 
-  /** 表格行(指标) */
-  type StatRow = {
-    key: string;
-    kind: IndicatorDef['kind'];
-    name: string;
-    unit: string;
-    code: string;
-  };
+  /** 表格行(指标,服务端返回,名称已含缩进) */
+  type StatRow = ProgressStatRow;
 
   const { showMessage } = useMessage();
 
   // ── 列宽拖拽(复用框架 ResizableTitle,同 sys/empUser):onHeaderCell 注入 resizable 与宽度回写 ──
   const TABLE_COMPONENTS = { header: { cell: ResizableTitle } };
   const colWidths = reactive<Record<string, number>>({});
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const resizableHeaderCell = (col: any): any => ({
     column: { ...col, resizable: true },
     onResize: (_event: MouseEvent, { size }: { size: { width: number } }) => {
@@ -102,8 +91,6 @@
   });
   const widthFor = (key: string, defaultWidth: number) => colWidths[key] ?? defaultWidth;
 
-
-
   // ── 筛选条件:年份 + 季度(切换即时生效) ──────────────────────────────
   const yearOptions = (buildYearItems(3) as { key: string; label: string }[]).map((item) => ({
     label: item.label,
@@ -113,33 +100,53 @@
   // dayjs 的 quarter() 需 quarterOfYear 插件，这里用 month() 推导当前季度
   const quarter = ref(String(Math.floor(dateUtil().month() / 3) + 1));
 
-  // ── 统计范围:全武汉市(全市合计) + 各报送单位 ──────────────────────────
-  const unitOptions = [
+  // ── 统计范围:全武汉市(全市合计) + 可见报送单位(allowedUnits) ──────────
+  const allowedUnits = reactive<{ code: string; name: string }[]>([]);
+  const unitOptions = computed(() => [
     { label: '全武汉市', value: 'overview' },
-    ...REPORT_UNITS.map((name) => ({ label: name, value: name })),
-  ];
+    ...allowedUnits.map((unit) => ({ label: unit.name, value: unit.code })),
+  ]);
   const activeUnit = ref('overview');
 
-  /** 当前统计范围内的单位数据集(全武汉市 = 全部单位;单选 = 该单位;懒初始化) */
-  const statUnits = computed<PeriodFillData[]>(() => {
-    const key = toPeriodKey(year.value, quarter.value);
-    const units = activeUnit.value === 'overview' ? [...REPORT_UNITS] : [activeUnit.value];
-    return units.map((unit) => ensureUnitPeriodData(key, unit));
+  // ── 统计数据(服务端已聚合) ───────────────────────────────────────────
+  const loading = ref(false);
+  const STAT_ROWS = reactive<StatRow[]>([]);
+  const activeUnitName = computed(() => allowedUnits.find((unit) => unit.code === activeUnit.value)?.name ?? null);
+
+  async function loadStat() {
+    loading.value = true;
+    try {
+      const res = await loadProgressStatData(
+        year.value,
+        quarter.value,
+        activeUnit.value === 'overview' ? undefined : activeUnit.value,
+      );
+      allowedUnits.splice(0, allowedUnits.length, ...res.allowedUnits);
+      if (activeUnit.value !== 'overview' && !res.allowedUnits.some((u) => u.code === activeUnit.value)) {
+        activeUnit.value = 'overview';
+      }
+      STAT_ROWS.splice(0, STAT_ROWS.length, ...res.rows);
+    } catch (e: unknown) {
+      showMessage(e instanceof Error ? e.message : '加载统计数据失败');
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  onMounted(async () => {
+    try {
+      // 类目树(列结构)来自字典;统计值来自 stat/data
+      await ensureProgressDicts();
+    } catch (e: unknown) {
+      showMessage(e instanceof Error ? e.message : '加载字典失败');
+    }
+    await loadStat();
   });
 
   const tableCardTitle = computed(() => {
     const period = `${year.value}年 ${quarterLabel(quarter.value)}`;
-    return activeUnit.value === 'overview' ? `${period} · 全武汉市` : `${period} · ${activeUnit.value}`;
+    return activeUnitName.value ? `${period} · ${activeUnitName.value}` : `${period} · 全武汉市`;
   });
-
-  // ── 表格行(静态指标清单) ─────────────────────────────────────────────
-  const STAT_ROWS: StatRow[] = INDICATORS.map((item) => ({
-    key: item.key,
-    kind: item.kind,
-    name: item.name,
-    unit: item.unit,
-    code: item.code,
-  }));
 
   /** 自动行(汇总/项目数)加粗只读 */
   const sumRowOnCell = (record: StatRow) => ({
@@ -183,8 +190,7 @@
   }
 
   const tableColumns = computed<TableColumnsType<StatRow>>(() => {
-    const units = statUnits.value;
-    /** 二级(叶子)类目列:值 = 范围内各单位在该类目上的合计之和 */
+    /** 二级(叶子)类目列:值 = 服务端 rows[].categories[leafKey] */
     const leafColumn = (leaf: CategoryDef): TableColumnsType<StatRow>[number] => ({
       key: leaf.key,
       title: leaf.label,
@@ -192,8 +198,7 @@
       align: 'right',
       onHeaderCell: resizableHeaderCell,
       onCell: sumRowOnCell,
-      render: (_value: unknown, record: StatRow) =>
-        renderDisplay(tabTotalOfUnits(INDICATOR_MAP[record.key], units, leaf.key)),
+      render: (_value: unknown, record: StatRow) => renderDisplay(record.categories[leaf.key]),
     });
     /** 嵌套类目拆为三个二级子列(一级表头跨列),简单类目单列 */
     const categoryColumns: TableColumnsType<StatRow> = DATA_CATEGORIES.map((cat) =>
@@ -214,8 +219,7 @@
         align: 'right',
         onHeaderCell: resizableHeaderCell,
         onCell: sumRowOnCell,
-        render: (_value: unknown, record: StatRow) =>
-          renderDisplay(grandTotalOfUnits(INDICATOR_MAP[record.key], units)),
+        render: (_value: unknown, record: StatRow) => renderDisplay(record.grand),
       },
       ...categoryColumns,
     ];
@@ -233,6 +237,9 @@
       widthFor('grand', 130) +
       LEAF_CATEGORIES.reduce((sum, leaf) => sum + widthFor(leaf.key, 150), 0),
   );
+
+  // 单位切换:重新拉取该单位分表(含代码切换场景)
+  watch(activeUnit, () => loadStat());
 
   // ── 导出(按钮保留,功能待做) ─────────────────────────────────────────
   function handleExport() {

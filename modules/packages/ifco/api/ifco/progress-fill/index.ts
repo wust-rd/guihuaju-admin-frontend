@@ -1,35 +1,39 @@
 /**
- * ifco —— 项目进展填报/统计：指标清单、类目、数据模型与汇总计算
+ * ifco —— 项目进展填报/统计：真实接口层（对接 modules/ifco 后端）
  *
- * 纯假数据阶段：不发起任何接口请求，数据存模块级内存仓库（progressFillStore，
- * 填报页与统计页共享同一份假数据；后端接入后整体替换为接口读写）。
- * 指标清单源自《字段.csv》：23 行，缩进 = 层级 × 4 个全角空格（保留在名称串内），
- * 指标代码：r2~r21 = 101~120 连续，r23 = 121；r1（项目总投资）与 r22（来源）无代码。
+ * 契约来源：《接口文档-项目进展填报.md》v4（zhugengju-admin-backend/modules/ifco/docs）。
+ * - 字典（指标/类目/单位）进入页面时经 ensureProgressDicts() 拉取一次，写入下方
+ *   模块级 reactive 常量（INDICATORS / CATEGORIES / UNITS ...），页面与导出按数组读取；
+ * - 填报数据按「年份 × 季度 × 报送单位」整包加载（loadProgressFillData），
+ *   保存按项目列颗粒度（saveProgressProject，值全量同步语义见文档 1.3）；
+ * - 统计页直接渲染服务端算好的 loadProgressStatData，本地不再聚合；
+ * - sum 汇总行 / count 项目数由前端实时计算展示（口径同后端，见 cellValue/tabTotal）。
  *
- * 汇总口径：
- * - 编号行（1./2./3.、（1）～（5））与「合计中：」引导的行计入上级求和；
- * - 「其中：」且无编号的行（其中：本年新开工、其中：金融机构信贷资金）为参考子集，可填但不参与求和；
- * - 汇总行共 4 行：本年实际到位资金 / 1.国家预算资金 / （1）中央预算资金 / 2.社会资本；
- * - 「城市更新项目总数」为 count 行：不可填写，各项目列单元格留空，合计 = 项目列数；
- * - 「新增就业岗位」为 total 行：各项目单元格不填值，合计值在填报页通过指标名称旁的
- *   「编辑」按钮以 Modal 直接录入；总览 = 各类目（叶子）录入值之总计。
+ * 指标名称缩进：接口 name 不含缩进，level 值 = 全角空格缩进数（已实测 r3=4、r8=14）。
  */
 
 import { reactive } from 'vue';
+import { defHttp } from '@jeesite/core/utils/http/axios';
+import { useGlobSetting } from '@jeesite/core/hooks/setting';
+import type { CategoryDef, ProjectColumn, TabFillData, PeriodFillData } from '../common';
+
+// ── 与成效域共用：类目/单位/周期类型与工具 ─────────────────────────────
+export type { CategoryDef, ProjectColumn, TabFillData, PeriodFillData } from '../common';
+export { QUARTER_OPTIONS, quarterLabel } from '../common';
 
 /** 指标行类型：fill=直接填报叶子行；sum=自动汇总行（不可编辑）；text=文字说明行；
  *  count=项目数自动行（合计=列数）；total=合计级录入行（单元格不填，合计直接录入） */
 export type IndicatorKind = 'fill' | 'sum' | 'text' | 'count' | 'total';
 
-/** 指标（表格行）定义 */
+/** 指标（表格行）定义（前端展示形态：name 已含缩进、code 空串、parts 仅 sum 行） */
 export type IndicatorDef = {
-  /** 稳定 key（r1～r23，对应《字段.csv》行序） */
+  /** 稳定 key（r1～r23，对应官方报表行序） */
   key: string;
-  /** 指标名称（含层级缩进：层级 × 4 个全角空格；「其中：/合计中：」前缀保留在名称内） */
+  /** 指标名称（含层级缩进：level × 全角空格；「其中：/合计中：」前缀保留在名称内） */
   name: string;
-  /** 计量单位 */
+  /** 计量单位（无单位为空串） */
   unit: string;
-  /** 指标代码（r2~r21=101~120、r23=121；r1/r22 无代码） */
+  /** 指标代码（r2~r21=101~120、r23=121；r1/r22 无代码为空串） */
   code: string;
   /** 行类型 */
   kind: IndicatorKind;
@@ -37,173 +41,325 @@ export type IndicatorDef = {
   parts?: string[];
 };
 
-// ── 类目/单位/周期与通用数据类型：与成效填报共用，定义见 ../common ──
-export type { CategoryDef, ProjectColumn, TabFillData, PeriodFillData } from '../common';
-export type { FillStore as ProgressFillStore } from '../common';
-export {
-  CATEGORIES,
-  DEFAULT_REPORT_UNIT,
-  CATEGORY_MAP,
-  DATA_CATEGORIES,
-  LEAF_CATEGORIES,
-  QUARTER_OPTIONS,
-  REPORT_UNITS,
-  SAMPLE_PROJECT_NAMES,
-  quarterLabel,
-  toPeriodKey,
-  prevPeriod,
-} from '../common';
-import {
-  LEAF_CATEGORIES as LEAF,
-  SAMPLE_PROJECT_NAMES as SAMPLE_NAMES,
-  hashSeed,
-} from '../common';
-import type { CategoryDef, FillStore, ProjectColumn, PeriodFillData, TabFillData } from '../common';
+// ── 服务端 VO（接口返回的 data 形状） ────────────────────────────────
 
-/** 层级缩进：空格数 */
-const INDENT = (level: number) => '\u3000'.repeat(level);
+/** GET /dict/indicators 行 */
+type IndicatorVo = {
+  key: string;
+  code: string | null;
+  name: string;
+  level: number;
+  unit: string | null;
+  kind: IndicatorKind;
+  parts: string[] | null;
+  sortNo: number;
+};
 
-function indicator(
-  key: string,
-  indent: number,
-  name: string,
-  unit: string,
-  code = '',
-  kind: IndicatorKind = 'fill',
-  parts?: string[],
-): IndicatorDef {
-  return { key, name: `${INDENT(indent)}${name}`, unit, code, kind, parts };
+/** GET /dict/categories 行（平铺：一级 + 二级紧随父） */
+type CategoryVo = {
+  key: string;
+  name: string;
+  parentKey: string | null;
+  isLeaf: boolean;
+  sortNo: number;
+};
+
+/** GET /dict/units 行 */
+type UnitVo = { code: string; name: string };
+
+/** GET /fill/data 的 data */
+type FillDataVo = {
+  year: string;
+  quarter: string;
+  unitCode: string;
+  unitName: string | null;
+  broughtIn: boolean;
+  fillDate: string | null;
+  tabs: Record<string, { projects: FillProjectVo[]; totals: Record<string, number> | null }>;
+};
+
+type FillProjectVo = {
+  id: string;
+  name: string;
+  imported: boolean;
+  createByName?: string | null;
+  createDeptName?: string | null;
+  createDate?: string | null;
+  values: Record<string, number | string | null>;
+};
+
+/** GET /stat/data 的 data（无 unit = 全市聚合） */
+type StatDataVo = {
+  year: string;
+  quarter: string;
+  unitCode: string | null;
+  unitName: string | null;
+  allowedUnits: UnitVo[];
+  categories: { key: string; name: string }[];
+  rows: StatRowVo[];
+};
+
+type StatRowVo = {
+  key: string;
+  code: string | null;
+  name: string;
+  level: number;
+  unit: string | null;
+  kind: IndicatorKind;
+  grand: number | null;
+  categories: Record<string, number | null>;
+};
+
+// ── 统一响应解包 ─────────────────────────────────────────────────────
+
+/** ifco 接口统一响应体 {code, msg, data}；code=200 成功 */
+type IfcoBody<T> = { code: number; msg: string; data: T };
+
+const { adminPath } = useGlobSetting();
+const BASE = adminPath + '/ifco/progress';
+
+/** ifco 统一响应解包：非 200 抛 Error(msg)（成效域复用） */
+export async function unwrap<T>(p: Promise<IfcoBody<T>>): Promise<T> {
+  const res = await p;
+  if (!res || typeof res.code !== 'number') {
+    throw new Error('接口返回格式异常');
+  }
+  if (res.code !== 200) {
+    throw new Error(res.msg || '请求失败');
+  }
+  return res.data;
+}
+
+// ── 字典状态（模块级单例，进入页面时加载一次） ────────────────────────
+
+/** 指标清单（按官方报表行序；加载前为空数组） */
+export const INDICATORS = reactive<IndicatorDef[]>([]);
+/** 指标 key → 定义（加载前为空对象） */
+export const INDICATOR_MAP = reactive<Record<string, IndicatorDef>>({});
+/** 一级类目（第一项为只读总览；加载前为空数组） */
+export const CATEGORIES = reactive<CategoryDef[]>([]);
+/** 类目 key → 定义（含二级） */
+export const CATEGORY_MAP = reactive<Record<string, CategoryDef>>({});
+/** 除总览外的全部一级类目 */
+export const DATA_CATEGORIES = reactive<CategoryDef[]>([]);
+/** 叶子类目（实际持有项目列的 tab） */
+export const LEAF_CATEGORIES = reactive<CategoryDef[]>([]);
+/** 报送单位（已按数据权限过滤；value=单位编码） */
+export const UNITS = reactive<UnitVo[]>([]);
+/** 单位编码 → 名称 */
+export const UNIT_NAME_MAP = reactive<Record<string, string>>({});
+
+let dictsPromise: Promise<void> | undefined;
+
+/** 指标 VO → 展示形态（name 拼缩进、code null→''、parts 仅 sum 行保留） */
+function adaptIndicator(vo: IndicatorVo): IndicatorDef {
+  return {
+    key: vo.key,
+    name: '\u3000'.repeat(vo.level || 0) + vo.name,
+    unit: vo.unit ?? '',
+    code: vo.code ?? '',
+    kind: vo.kind,
+    parts: vo.kind === 'sum' && vo.parts?.length ? [...vo.parts] : undefined,
+  };
+}
+
+/** 平铺类目 VO → 树（「总览」为前端聚合概念，头部补齐） */
+function adaptCategories(vos: CategoryVo[]): CategoryDef[] {
+  type Node = CategoryDef & { sortNo: number };
+  const byKey = new Map<string, Node>();
+  for (const vo of vos) {
+    byKey.set(vo.key, { key: vo.key, label: vo.name, sortNo: vo.sortNo });
+  }
+  const roots: Node[] = [];
+  for (const vo of vos) {
+    const node = byKey.get(vo.key)!;
+    if (vo.parentKey && byKey.has(vo.parentKey)) {
+      const parent = byKey.get(vo.parentKey)!;
+      parent.children = parent.children ?? [];
+      parent.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  return [{ key: 'overview', label: '总览' }, ...roots];
 }
 
 /**
- * 指标清单（行序与《字段.csv》一致）。
- * 指标代码：r2~r21 = 101~120 连续；r23 = 121；r1（项目总投资）与 r22（来源）无代码。
+ * 拉取进展域字典（指标 + 类目 + 单位），写入模块级 reactive 常量。
+ * 并发调用共享同一 Promise；已加载成功后直接返回。
  */
-export const INDICATORS: IndicatorDef[] = [
-  indicator('r1', 0, '项目总投资', '万元'),
-  indicator('r2', 0, '城市更新项目总数', '个', '101', 'count'),
-  indicator('r3', 4, '其中：本年新开工', '个', '102'),
-  indicator('r4', 0, '本年完成投资额', '万元', '103'),
-  indicator('r5', 0, '本年实际到位资金', '万元', '104', 'sum', ['r6', 'r16', 'r21']),
-  indicator('r6', 4, '合计中：1.国家预算资金', '万元', '105', 'sum', [
-    'r7',
-    'r12',
-    'r13',
-    'r14',
-    'r15',
-  ]),
-  indicator('r7', 8, '其中：（1）中央预算资金', '万元', '106', 'sum', ['r8', 'r9', 'r10', 'r11']),
-  indicator('r8', 14, '合计中：中央预算内投资', '万元', '107'),
-  indicator('r9', 18, '其他中央财政资金', '万元', '108'),
-  indicator('r10', 18, '国债（增发国债）', '万元', '109'),
-  indicator('r11', 18, '超长期特别国债', '万元', '110'),
-  indicator('r12', 11, '（2）省级预算资金', '万元', '111'),
-  indicator('r13', 11, '（3）市级及以下预算资金', '万元', '112'),
-  indicator('r14', 11, '（4）地方政府一般债券', '万元', '113'),
-  indicator('r15', 11, '（5）地方政府专项债券', '万元', '114'),
-  indicator('r16', 4, '2.社会资本', '万元', '115', 'sum', ['r17', 'r18', 'r19']),
-  indicator('r17', 8, '其中：（1）产权单位出资', '万元', '116'),
-  indicator('r18', 11, '（2）规模化实施运营主体出资', '万元', '117'),
-  indicator('r19', 11, '（3）居民出资', '万元', '118'),
-  indicator('r20', 8, '其中：金融机构信贷资金', '万元', '119'),
-  indicator('r21', 4, '3.其他本年实际到位资金（应注明来源）', '万元', '120'),
-  indicator('r22', 5, '其他本年实际到位资金的来源', '', '', 'text'),
-  indicator('r23', 0, '新增就业岗位', '个', '121', 'total'),
-];
+export async function ensureProgressDicts(): Promise<void> {
+  if (dictsPromise) return dictsPromise;
+  dictsPromise = (async () => {
+    const [indicatorVos, categoryVos, unitVos] = await Promise.all([
+      unwrap<IndicatorVo[]>(defHttp.get({ url: BASE + '/dict/indicators' })),
+      unwrap<CategoryVo[]>(defHttp.get({ url: BASE + '/dict/categories' })),
+      unwrap<UnitVo[]>(defHttp.get({ url: BASE + '/dict/units' })),
+    ]);
+    INDICATORS.splice(0, INDICATORS.length, ...indicatorVos.map(adaptIndicator));
+    Object.keys(INDICATOR_MAP).forEach((k) => delete INDICATOR_MAP[k]);
+    for (const item of INDICATORS) INDICATOR_MAP[item.key] = item;
 
-export const INDICATOR_MAP: Record<string, IndicatorDef> = Object.fromEntries(
-  INDICATORS.map((item) => [item.key, item]),
-);
+    const tree = adaptCategories(categoryVos);
+    CATEGORIES.splice(0, CATEGORIES.length, ...tree);
+    Object.keys(CATEGORY_MAP).forEach((k) => delete CATEGORY_MAP[k]);
+    for (const cat of tree) {
+      for (const item of [cat, ...(cat.children ?? [])]) CATEGORY_MAP[item.key] = item;
+    }
+    const dataCats = tree.filter((cat) => cat.key !== 'overview');
+    DATA_CATEGORIES.splice(0, DATA_CATEGORIES.length, ...dataCats);
+    LEAF_CATEGORIES.splice(0, LEAF_CATEGORIES.length, ...dataCats.flatMap((cat) => cat.children ?? [cat]));
 
-/** 文字行（其他本年实际到位资金的来源）的示例取值 */
-const SAMPLE_SOURCES = ['企业自筹为主', '银行贷款为主', '市区两级财政配套', '专项债券为主', '社会资本投入为主'];
+    UNITS.splice(0, UNITS.length, ...unitVos);
+    Object.keys(UNIT_NAME_MAP).forEach((k) => delete UNIT_NAME_MAP[k]);
+    for (const unit of unitVos) UNIT_NAME_MAP[unit.code] = unit.name;
+  })().catch((e) => {
+    // 失败允许重试：丢弃共享 Promise
+    dictsPromise = undefined;
+    throw e;
+  });
+  return dictsPromise;
+}
 
-/** 数值行示例值区间 [min, max]（万元 / 个） */
-const SAMPLE_RANGES: Record<string, [number, number]> = {
-  r1: [800, 52000],
-  r3: [0, 1],
-  r4: [200, 16000],
-  r8: [100, 8000],
-  r9: [50, 3000],
-  r10: [0, 5000],
-  r11: [0, 4000],
-  r12: [100, 6000],
-  r13: [100, 6000],
-  r14: [0, 4000],
-  r15: [0, 8000],
-  r17: [100, 5000],
-  r18: [100, 8000],
-  r19: [0, 2000],
-  r20: [0, 6000],
-  r21: [0, 4000],
-  r23: [5, 300],
+// ── 填报数据：整包加载 ───────────────────────────────────────────────
+
+/** 服务端项目列 → 前端列（key=服务端 id；values 归一：null/空值剔除） */
+function adaptProject(vo: FillProjectVo): ProjectColumn {
+  const values: Record<string, number | string | [number, number]> = {};
+  for (const [k, v] of Object.entries(vo.values ?? {})) {
+    if (v === null || v === '' || v === undefined) continue;
+    values[k] = v;
+  }
+  return { key: vo.id, name: vo.name, imported: vo.imported, values };
+}
+
+/** 一周期一单位的填报数据（前端形态，含 broughtIn 标记） */
+export type ProgressFillData = {
+  periodData: PeriodFillData;
+  broughtIn: boolean;
 };
 
-function sampleCellValue(tabKey: string, columnKey: string, item: IndicatorDef): number | string {
-  const seed = hashSeed(`${tabKey}|${columnKey}|${item.key}`);
-  if (item.kind === 'text') {
-    return SAMPLE_SOURCES[seed % SAMPLE_SOURCES.length];
-  }
-  const [min, max] = SAMPLE_RANGES[item.key] ?? [0, 100];
-  if (min === max) return min;
-  // 万元行取整十，观感更接近真实投资数
-  const value = min + (seed % (max - min + 1));
-  return item.unit === '万元' ? value - (value % 10) : value;
-}
-
-export function createSampleProjects(tabKey: string): ProjectColumn[] {
-  return SAMPLE_NAMES.map((name) => {
-    const key = `${tabKey}-${name}`;
-    const values: Record<string, number | string> = {};
-    for (const item of INDICATORS) {
-      // sum/count 为自动行,不存填报值
-      if (item.kind !== 'fill' && item.kind !== 'text') continue;
-      values[item.key] = sampleCellValue(tabKey, key, item);
-    }
-    return { key, name, imported: false, values };
-  });
-}
-
-/** 新周期的初始数据：每个叶子类目 20 列示例项目 + 合计级录入行示例值 */
-export function createPeriodData(): PeriodFillData {
-  const data: PeriodFillData = {};
-  for (const leaf of LEAF) {
-    data[leaf.key] = {
-      projects: createSampleProjects(leaf.key),
-      totals: createSampleTotals(leaf.key),
+/** 加载某周期某单位的整包填报数据（全部叶子类目都有键，空数据为空结构） */
+export async function loadProgressFillData(
+  year: number | string,
+  quarter: string,
+  unit: string,
+): Promise<ProgressFillData> {
+  const vo = await unwrap<FillDataVo>(
+    defHttp.get({
+      url: BASE + '/fill/data',
+      params: { year: String(year), quarter, unit },
+    }),
+  );
+  const periodData: PeriodFillData = {};
+  for (const leaf of LEAF_CATEGORIES) {
+    const tab = vo.tabs?.[leaf.key];
+    periodData[leaf.key] = {
+      projects: (tab?.projects ?? []).map(adaptProject),
+      totals: { ...(tab?.totals ?? {}) },
     };
   }
-  return data;
+  return { periodData, broughtIn: vo.broughtIn === true };
 }
 
-/** 合计级录入行(total)的示例值：新增就业岗位按叶子类目给一个个位数~三百的数 */
-function createSampleTotals(tabKey: string): Record<string, number> {
-  const totals: Record<string, number> = {};
-  for (const item of INDICATORS) {
-    if (item.kind !== 'total') continue;
-    totals[item.key] = Number(sampleCellValue(tabKey, `${tabKey}-total`, item));
-  }
-  return totals;
+// ── 填报写操作 ───────────────────────────────────────────────────────
+
+/** 保存项目列返回 */
+export type SaveProjectResult = { projectId: string; projectName: string; sortNo: number };
+
+/**
+ * 保存项目列（按项目颗粒度、值全量同步）：
+ * project.id 为空 = 新建（返回 projectId）；非空 = 更新（可改名）；
+ * values 只需提交 fill/text 键，本次未提交的已有键视为清空。
+ */
+export async function saveProgressProject(params: {
+  year: number | string;
+  quarter: string;
+  unit: string;
+  leafKey: string;
+  project: { id?: string; name: string; values: Record<string, number | string> };
+}): Promise<SaveProjectResult> {
+  return unwrap<SaveProjectResult>(defHttp.postJson({ url: BASE + '/fill/saveProject', data: params }));
 }
 
-// ── 内存假数据仓库（模块级单例，填报页与统计页共享；后端接入后整体替换） ──
-export const progressFillStore: FillStore = reactive({});
-
-/** 取某周期某报送单位的数据（懒初始化：首次访问生成 20 列示例数据） */
-export function ensureUnitPeriodData(periodKey: string, unit: string): PeriodFillData {
-  if (!progressFillStore[periodKey]) {
-    progressFillStore[periodKey] = {};
-  }
-  if (!progressFillStore[periodKey]![unit]) {
-    progressFillStore[periodKey]![unit] = createPeriodData();
-  }
-  return progressFillStore[periodKey]![unit];
+/** 删除项目列（级联删除该列全部值；id 为 query 参数） */
+export async function deleteProgressProject(id: string): Promise<{ projectName: string }> {
+  return unwrap<{ projectName: string }>(
+    defHttp.post({ url: BASE + `/fill/deleteProject?id=${encodeURIComponent(id)}` }),
+  );
 }
 
-/** 只读取某周期某报送单位的数据（不触发懒初始化） */
-export function getUnitPeriodData(periodKey: string, unit: string): PeriodFillData | undefined {
-  return progressFillStore[periodKey]?.[unit];
+/** 保存合计级录入行（kind=total，目前仅 r23 新增就业岗位）；value=null 清空 */
+export async function saveProgressTotal(params: {
+  year: number | string;
+  quarter: string;
+  unit: string;
+  leafKey: string;
+  indicatorKey: string;
+  value: number | null;
+}): Promise<{ indicatorKey: string; value: number | null }> {
+  return unwrap<{ indicatorKey: string; value: number | null }>(
+    defHttp.postJson({ url: BASE + '/fill/saveTotal', data: params }),
+  );
 }
+
+/** 带入上一季度（每「周期×单位」限一次，重复返回 400 文案） */
+export async function bringInPrevPeriod(params: {
+  year: number | string;
+  quarter: string;
+  unit: string;
+}): Promise<{ broughtProjectCount: number; fromYear: string; fromQuarter: string }> {
+  return unwrap<{ broughtProjectCount: number; fromYear: string; fromQuarter: string }>(
+    defHttp.postJson({ url: BASE + '/fill/bringIn', data: params }),
+  );
+}
+
+// ── 统计（服务端已聚合，前端直接渲染） ───────────────────────────────
+
+/** 统计页展示行（name 已拼缩进；categories = 叶子类目 key → 合计值） */
+export type ProgressStatRow = IndicatorDef & {
+  grand: number | undefined;
+  categories: Record<string, number | undefined>;
+};
+
+/** 统计页数据 */
+export type ProgressStatData = {
+  allowedUnits: UnitVo[];
+  rows: ProgressStatRow[];
+};
+
+/** 进展统计：unit 省略 = 全市（当前用户可见单位合计） */
+export async function loadProgressStatData(
+  year: number | string,
+  quarter: string,
+  unit?: string,
+): Promise<ProgressStatData> {
+  const vo = await unwrap<StatDataVo>(
+    defHttp.get({
+      url: BASE + '/stat/data',
+      params: unit ? { year: String(year), quarter, unit } : { year: String(year), quarter },
+    }),
+  );
+  const rows: ProgressStatRow[] = vo.rows.map((row) => {
+    const categories: Record<string, number | undefined> = {};
+    for (const [k, v] of Object.entries(row.categories ?? {})) {
+      categories[k] = v ?? undefined;
+    }
+    return {
+      key: row.key,
+      name: '\u3000'.repeat(row.level || 0) + row.name,
+      unit: row.unit ?? '',
+      code: row.code ?? '',
+      kind: row.kind,
+      parts: undefined,
+      grand: row.grand ?? undefined,
+      categories,
+    };
+  });
+  return { allowedUnits: vo.allowedUnits ?? [], rows };
+}
+
+// ── 展示口径：sum 汇总 / count 项目数由前端实时计算（同后端口径） ──────
 
 /**
  * 单元格取值：汇总行 = 构成子行递归求和；count/total 行不落单元格（返回 undefined）；
@@ -221,15 +377,13 @@ export function cellValue(item: IndicatorDef, column: ProjectColumn): number | s
   }
   if (item.kind === 'count' || item.kind === 'total') return undefined;
   const value = column.values[item.key];
-  // 进展域无双值行；数组值（成效域二元组）不会出现，守卫仅为类型收敛
   if (Array.isArray(value)) return undefined;
   return value === undefined || value === '' ? undefined : value;
 }
 
 /**
  * 一行指标在某叶子类目上的「合计」：
- * total 行 = 直接录入的合计值（各项目单元格不填值）；
- * count 行 = 项目列数；text 行无合计（undefined）；其余 = 各列数值之和。
+ * total 行 = 直接录入的合计值；count 行 = 项目列数；text 行无合计；其余 = 各列之和。
  */
 export function tabTotal(item: IndicatorDef, tab: TabFillData | undefined): number | undefined {
   if (item.kind === 'total') return tab?.totals?.[item.key];
@@ -247,36 +401,8 @@ export function tabTotal(item: IndicatorDef, tab: TabFillData | undefined): numb
 export function grandTotal(item: IndicatorDef, periodData: PeriodFillData | undefined): number | undefined {
   if (item.kind === 'text') return undefined;
   let sum = 0;
-  for (const leaf of LEAF) {
+  for (const leaf of LEAF_CATEGORIES) {
     const value = tabTotal(item, periodData?.[leaf.key]);
-    if (typeof value === 'number') sum += value;
-  }
-  return sum;
-}
-
-// ── 统计页聚合口径：把一批报送单位的数据相加 ──────────────────────────
-
-/** 统计口径：一批单位聚合后，某指标在某叶子类目上的合计（text 行恒为空） */
-export function tabTotalOfUnits(
-  item: IndicatorDef,
-  units: PeriodFillData[],
-  leafKey: string,
-): number | undefined {
-  if (item.kind === 'text') return undefined;
-  let sum = 0;
-  for (const data of units) {
-    const value = tabTotal(item, data[leafKey]);
-    if (typeof value === 'number') sum += value;
-  }
-  return sum;
-}
-
-/** 统计口径：一批单位聚合后的总计（text 行恒为空） */
-export function grandTotalOfUnits(item: IndicatorDef, units: PeriodFillData[]): number | undefined {
-  if (item.kind === 'text') return undefined;
-  let sum = 0;
-  for (const data of units) {
-    const value = grandTotal(item, data);
     if (typeof value === 'number') sum += value;
   }
   return sum;

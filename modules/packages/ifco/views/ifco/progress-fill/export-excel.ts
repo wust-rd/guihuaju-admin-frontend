@@ -131,7 +131,6 @@ export async function exportProgressFillExcel({ year, quarter, periodData }: Exp
     return { wch: 12 };
   });
 
-
   const workbook: WorkBook = {
     SheetNames: ['项目进展填报'],
     Sheets: { 项目进展填报: worksheet },
