@@ -1,10 +1,52 @@
 /**
- * 市住更局 —— 城市体检 公共常量(市级/区级共用)
+ * 市住更局 —— 城市体检 公共常量与 HTTP 工具（市级/区级共用）
  *
- * 说明:
- *  - 区级体检搜索表单的附加筛选项(体检片区/行政区划/功能定位)在此统一定义;
- *  - 当前后端尚未介入,选项暂为静态假数据,后端接入后改为字典或接口拉取。
+ * HTTP 约定（对齐已上线的 esp 模块模式，后端 modules/check）：
+ *  - 响应协议：后端统一返回 {code, msg, data}（code=200 成功 / 400 业务错误 / 500 系统异常），
+ *    与框架 defHttp 默认解包的 jeesite {result} 协议不同 —— unwrap() 统一处理：
+ *    响应体含 code 字段 → code===200 返回 data，否则抛出 msg；
+ *    不含 code 字段（后端未来切 jeesite 协议）→ 原样返回。
+ *  - 分页映射：后端 {total, pageNum, pageSize, list} → BasicTable fetchSetting {count, list}
+ *    （后端入参 pageNum/pageSize ← 表格 pageField pageNo/sizeField pageSize，在 api 函数内转换）。
+ *  - URL 前缀：adminPath + '/cityCheck/...'（后端 @RequestMapping("${adminPath}/cityCheck/...")）。
+ *  - 下钻路由 {id} 恒传记录业务编码 code（体系=sys_no、调查/成果=sort_no），后端详情接口
+ *    同时支持主键与 code 反查。
  */
+
+import { defHttp } from '@jeesite/core/utils/http/axios';
+import { useGlobSetting } from '@jeesite/core/hooks/setting';
+
+const { adminPath } = useGlobSetting();
+
+/** check 模块接口基址 */
+export const CHECK_API = adminPath + '/cityCheck';
+
+/** 统一解包 {code, msg, data}（兼容 jeesite result 协议透传） */
+export function unwrap<T = any>(body: any): T {
+  if (body && typeof body === 'object' && Reflect.has(body, 'code')) {
+    if (body.code === 200) return body.data as T;
+    throw new Error(body.msg || '接口请求失败');
+  }
+  return body as T;
+}
+
+/** 后端分页结构 */
+export type CheckPage<T> = { total: number; pageNum: number; pageSize: number; list: T[] };
+
+/** BasicTable fetchSetting 分页结构（totalField=count） */
+export type TablePage<T> = { count: number; list: T[] };
+
+/**
+ * GET 分页接口 → BasicTable api 直用函数：
+ * 入参 pageNo/pageSize 转 pageNum/pageSize，返回 {count, list}
+ */
+export async function pageGet<T>(url: string, params: Recordable = {}): Promise<TablePage<T>> {
+  const { pageNo, pageSize, ...rest } = params ?? {};
+  const data = unwrap<CheckPage<T>>(
+    await defHttp.get({ url, params: { ...rest, pageNum: pageNo, pageSize } }),
+  );
+  return { count: data.total, list: data.list };
+}
 
 /** 行政区划(武汉市行政区名) */
 export const DISTRICTS = [

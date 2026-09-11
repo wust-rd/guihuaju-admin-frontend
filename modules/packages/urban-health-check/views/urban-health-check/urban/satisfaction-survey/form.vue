@@ -1,10 +1,8 @@
 <!--
   市住更局 —— 满意度调查 新增/编辑/查看 表单抽屉
 
-  组件格式对齐 indicator-result/form.vue:
-   - BasicDrawer + useDrawerInner + BasicForm(FormSchema);
-   - 查看模式:表单 disabled + 抽屉隐藏底部按钮。
-  当前后端尚未介入:保存仅做表单校验后关闭抽屉,不发起任何接口请求。
+  组件格式对齐 indicator-result/form.vue；接口已接入 surveySave（/cityCheck/survey/save）。
+  调查年份每年一次唯一（后端校验）；综合满意度在"提交发布"时按问题五档加权自动计算，表单只读展示。
 -->
 <template>
   <BasicDrawer v-bind="$attrs" force-render width="70%" @register="registerDrawer" @ok="handleSubmit">
@@ -23,6 +21,7 @@
   import { BasicForm, FormSchema, useForm } from '@jeesite/core/components/Form';
   import { BasicDrawer, useDrawerInner } from '@jeesite/core/components/Drawer';
   import type { SatisfactionSurvey } from '@jeesite/urban-health-check/api/urban-health-check/urban/satisfaction-survey';
+  import { surveySave } from '@jeesite/urban-health-check/api/urban-health-check/urban/satisfaction-survey';
   import { YEAR_OPTIONS } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator-system';
 
   const emit = defineEmits(['success', 'register']);
@@ -53,6 +52,7 @@
       component: 'Select',
       componentProps: { options: YEAR_OPTIONS, allowClear: true },
       rules: [{ type: 'string', required: true, message: '请选择调查年份' }],
+      helpMessage: '每年一次，不可重复创建',
     },
     {
       label: '填报时间',
@@ -73,6 +73,7 @@
       component: 'InputNumber',
       componentProps: { min: 0, style: 'width: 100%' },
       rules: [{ required: true, message: '请输入调查问题数量' }],
+      helpMessage: '提交时按问题明细自动同步',
     },
     {
       label: '有效调查问卷数（份）',
@@ -85,6 +86,8 @@
       field: 'overallSatisfaction',
       component: 'InputNumber',
       componentProps: { min: 0, max: 100, style: 'width: 100%' },
+      dynamicDisabled: true,
+      helpMessage: '提交发布时按问题五档满意度加权自动计算，不可手工修改',
     },
     {
       label: '备注',
@@ -134,8 +137,19 @@
       }
       return;
     }
-    // TODO: 后端接入后在此调用保存接口
-    setTimeout(closeDrawer);
-    emit('success', data);
+    setDrawerProps({ loading: true });
+    try {
+      await surveySave({
+        ...data,
+        id: record.value.isNewRecord ? undefined : record.value.id,
+      });
+      showMessage('保存成功');
+      setTimeout(closeDrawer);
+      emit('success', data);
+    } catch (e: any) {
+      showMessage(e?.message || '保存失败', 'error');
+    } finally {
+      setDrawerProps({ loading: false });
+    }
   }
 </script>

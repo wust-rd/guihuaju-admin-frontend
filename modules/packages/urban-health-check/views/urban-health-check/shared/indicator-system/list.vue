@@ -4,8 +4,9 @@
   组件格式 / 页面布局对齐 packages/core/views/sys/area：
    - BasicTable + useTable + 搜索 FormProps（schemas） + actionColumn
    - 新增/编辑/查看 表单使用 BasicDrawer（useDrawer），而非 Modal
-  当前后端尚未介入，页面为纯 UI：不发起任何接口请求；
-  字段与常量定义见 @jeesite/urban-health-check/api/urban-health-check/urban/indicator-system。
+  接口已接入（modules/check /cityCheck/indicatorSet）：
+   - 列表/删除/启停/提交状态见 api/urban-health-check/urban/indicator-system；
+   - 行携带 id（操作用）与 code（下钻路由用）。
 -->
 <template>
   <PageWrapper>
@@ -32,6 +33,7 @@
           :checked="record.enabled === ENABLED_STATUS.ENABLED"
           checked-children="启用"
           un-checked-children="停用"
+          :loading="record._enableLoading"
           @change="(checked) => handleToggleEnabled(record, checked)"
         />
       </template>
@@ -54,6 +56,7 @@
   import { Switch, Tag } from 'antdv-next';
   import { router } from '@jeesite/core/router';
   import { useGo } from '@jeesite/core/hooks/web/usePage';
+  import { useMessage } from '@jeesite/core/hooks/web/useMessage';
   import { Icon } from '@jeesite/core/components/Icon';
   import { PageWrapper } from '@jeesite/core/components/Page';
   import { BasicTable, BasicColumn, useTable } from '@jeesite/core/components/Table';
@@ -62,9 +65,11 @@
   import type { IndicatorSystem } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator-system';
   import {
     ENABLED_STATUS,
-    MOCK_LIST,
     SUBMIT_STATUS,
     YEAR_OPTIONS,
+    indicatorSystemDelete,
+    indicatorSystemEnable,
+    indicatorSystemPage,
   } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator-system';
   import InputForm from './form.vue';
   import {
@@ -76,6 +81,7 @@
 
   const { meta } = unref(router.currentRoute);
   const go = useGo();
+  const { showMessage } = useMessage();
 
   const props = defineProps({
     /** 本级路由基址,如 /urban-health-check/urban/indicator-system */
@@ -171,8 +177,8 @@
   };
 
   const [registerDrawer, { openDrawer, setDrawerProps }] = useDrawer();
-  const [registerTable] = useTable({
-    dataSource: MOCK_LIST,
+  const [registerTable, { reload }] = useTable({
+    api: indicatorSystemPage,
     columns: tableColumns,
     actionColumn: actionColumn,
     formConfig: searchForm,
@@ -188,24 +194,39 @@
     openDrawer(true, record);
   }
 
-  /** 打开该体系的 show 页(RESTful:/…/indicator-system/{id}) */
+  /** 打开该体系的 show 页(RESTful:/…/indicator-system/{code}) */
   function handleDetail(record: Recordable) {
     go(`${props.routeBase}/${record.code}`);
   }
 
-  /** 启用状态切换（纯 UI，仅更新本地行数据） */
-  function handleToggleEnabled(record: IndicatorSystem, checked: boolean) {
-    // TODO: 后端接入后调用启用/停用接口
-    record.enabled = checked ? ENABLED_STATUS.ENABLED : ENABLED_STATUS.DISABLED;
+  /** 启用状态切换（后端保证同时仅一套启用；失败回滚刷新列表） */
+  async function handleToggleEnabled(record: IndicatorSystem & { _enableLoading?: boolean }, checked: boolean) {
+    record._enableLoading = true;
+    try {
+      await indicatorSystemEnable(record.id!, checked ? ENABLED_STATUS.ENABLED : ENABLED_STATUS.DISABLED);
+      record.enabled = checked ? ENABLED_STATUS.ENABLED : ENABLED_STATUS.DISABLED;
+      // 启用会互斥停用其它体系，整表刷新保持一致
+      reload();
+    } catch (e: any) {
+      showMessage(e?.message || '操作失败', 'error');
+    } finally {
+      record._enableLoading = false;
+    }
   }
 
   /** 删除 */
-  function handleDelete(_record: IndicatorSystem) {
-    // TODO: 后端接入后调用删除接口并刷新列表
+  async function handleDelete(record: IndicatorSystem) {
+    try {
+      await indicatorSystemDelete([record.id!]);
+      showMessage('删除成功');
+      reload();
+    } catch (e: any) {
+      showMessage(e?.message || '删除失败', 'error');
+    }
   }
 
-  /** 表单保存成功回调（后端接入后在此 reload 列表） */
+  /** 表单保存成功回调：刷新列表 */
   function handleSuccess() {
-    // TODO: 后端接入后刷新列表
+    reload();
   }
 </script>

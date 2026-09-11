@@ -1,8 +1,8 @@
 <!--
   市住更局 —— 指标项结果 show 页 / 一级维度表(Tabs 第一个页签)
 
-  列:一级维度名称 / 图层对象数量 / 图层覆盖面积(km²);
-  演示假数据,后端接入后删除改用 api 拉取。
+  接口已接入：dimensionListBySet（首次自动按体系指标项的一级维度同步生成维度行）。
+  列:一级维度名称 / 图层对象数量 / 图层覆盖面积(km²) / 操作(编辑)。
 -->
 <template>
   <div>
@@ -17,29 +17,46 @@
         </a-button>
       </template>
     </BasicTable>
+
+    <DimForm @register="registerDrawer" @success="load" />
   </div>
 </template>
 <script lang="ts" setup name="UhcSharedIndicatorResultDimTable">
-  import { unref } from 'vue';
+  import { onMounted, ref, unref } from 'vue';
   import { router } from '@jeesite/core/router';
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
   import { Icon } from '@jeesite/core/components/Icon';
   import { BasicTable, BasicColumn, useTable } from '@jeesite/core/components/Table';
+  import { useDrawer } from '@jeesite/core/components/Drawer';
+  import { dimensionListBySet } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator-result';
+  import DimForm from './dim-form.vue';
 
-  const { meta } = unref(router.currentRoute);
+  const { meta, params } = unref(router.currentRoute);
   const { showMessage } = useMessage();
   const getTitle = {
     icon: meta.icon || 'ant-design:book-outlined',
     value: '一级维度',
   };
 
-  /** 一级维度图层统计(演示假数据,后端接入后删除,改用 api 拉取) */
-  const MOCK_DIM_LAYERS = [
-    { id: '1', dimName: '好房子', layerCount: 12, layerArea: 286.5 },
-    { id: '2', dimName: '好小区', layerCount: 8, layerArea: 154.2 },
-    { id: '3', dimName: '好城区', layerCount: 6, layerArea: 98.7 },
-    { id: '4', dimName: '专项1：既有建筑改造利用', layerCount: 9, layerArea: 132.4 },
-  ];
+  // 兼容菜单占位符 {id}/{code}；show 页路由 id 恒为体系编码
+  const setCode = ((params.id ?? params.code) as string) || '';
+
+  /** 维度行 */
+  const rows = ref<Recordable[]>([]);
+  const loading = ref(false);
+
+  onMounted(load);
+
+  async function load() {
+    loading.value = true;
+    try {
+      rows.value = (await dimensionListBySet(setCode)) as Recordable[];
+    } catch (e: any) {
+      showMessage(e?.message || '加载一级维度失败', 'error');
+    } finally {
+      loading.value = false;
+    }
+  }
 
   /** 一级维度表列 */
   const dimColumns: BasicColumn[] = [
@@ -48,18 +65,32 @@
     { title: '图层覆盖面积（km²）', dataIndex: 'layerArea', width: 180, align: 'center' },
   ];
 
+  /** 操作列（编辑图层信息） */
+  const actionColumn: BasicColumn = {
+    width: 100,
+    actions: (record: Recordable) => [
+      {
+        label: '编辑',
+        onClick: () => handleForm({ ...record, isNewRecord: false }),
+      },
+    ],
+  };
+
   const [registerDimTable] = useTable({
-    dataSource: MOCK_DIM_LAYERS,
+    dataSource: rows,
+    loading,
     columns: dimColumns,
+    actionColumn: actionColumn,
     showTableSetting: true,
     showIndexColumn: false,
     pagination: false,
     canResize: true,
   });
 
-  /** 新增一级维度(维度图层表单待定,后端接入后实现) */
-  function handleForm(_record: Recordable) {
-    // TODO: 维度图层表单确定后接入
-    showMessage('新增一级维度:表单待定');
+  const [registerDrawer, { openDrawer, setDrawerProps }] = useDrawer();
+
+  function handleForm(row: Recordable) {
+    setDrawerProps({ showFooter: true });
+    openDrawer(true, { ...row, setCode });
   }
 </script>

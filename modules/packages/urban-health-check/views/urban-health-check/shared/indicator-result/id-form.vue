@@ -1,10 +1,9 @@
 <!--
-  市住更局 —— 指标 新增/编辑/查看 表单抽屉
+  市住更局 —— 指标项结果 新增/编辑/查看 表单抽屉
 
-  组件格式对齐 indicator-system/form.vue:
-   - BasicDrawer + useDrawerInner + BasicForm(FormSchema);
-   - 查看模式:表单 disabled + 抽屉隐藏底部按钮。
-  当前后端尚未介入:保存仅做表单校验后关闭抽屉,不发起任何接口请求。
+  组件格式对齐 indicator-system/form.vue；接口已接入 indicatorResultSave。
+  结果填报口径（US-4.3）：仅维护 指标值 / 标准值目标值 / 评估结果；
+  维度与指标定义列为指标项快照（只读）；预警状态由后端按评估结果自动计算（只读展示）。
 -->
 <template>
   <BasicDrawer v-bind="$attrs" force-render width="70%" @register="registerDrawer" @ok="handleSubmit">
@@ -24,6 +23,7 @@
   import { BasicDrawer, useDrawerInner } from '@jeesite/core/components/Drawer';
   import type { Indicator } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator';
   import { EVAL_RESULT, WARNING_STATUS } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator';
+  import { indicatorResultSave } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator-result';
 
   const EVAL_RESULT_OPTIONS = Object.values(EVAL_RESULT).map((item) => ({ label: item, value: item }));
   const WARNING_STATUS_OPTIONS = Object.values(WARNING_STATUS).map((item) => ({ label: item, value: item }));
@@ -38,7 +38,7 @@
 
   const getTitle = computed(() => ({
     icon: meta.icon || 'ant-design:book-outlined',
-    value: isView.value ? '查看指标' : record.value.isNewRecord ? '新增指标' : '编辑指标',
+    value: isView.value ? '查看指标结果' : record.value.isNewRecord ? '新增指标结果' : '编辑指标结果',
   }));
 
   const inputFormSchemas: FormSchema[] = [
@@ -52,21 +52,19 @@
       label: '一级维度',
       field: 'dim1',
       component: 'Input',
-      componentProps: { maxlength: 50 },
-      rules: [{ required: true, message: '请输入一级维度' }],
+      dynamicDisabled: true,
     },
     {
       label: '二级维度',
       field: 'dim2',
       component: 'Input',
-      componentProps: { maxlength: 50 },
-      rules: [{ required: true, message: '请输入二级维度' }],
+      dynamicDisabled: true,
     },
     {
       label: '三级维度',
       field: 'dim3',
       component: 'Input',
-      componentProps: { maxlength: 50 },
+      dynamicDisabled: true,
       helpMessage: '可空:指标直接挂二级维度时留空',
     },
     {
@@ -79,14 +77,13 @@
       label: '指标项名称',
       field: 'indicatorName',
       component: 'Input',
-      componentProps: { maxlength: 100 },
-      rules: [{ required: true, message: '请输入指标项名称' }],
+      dynamicDisabled: true,
     },
     {
       label: '单位',
       field: 'unit',
       component: 'Input',
-      componentProps: { maxlength: 20 },
+      dynamicDisabled: true,
     },
     {
       label: '指标值',
@@ -106,30 +103,33 @@
       field: 'evalResult',
       component: 'Select',
       componentProps: { options: EVAL_RESULT_OPTIONS, allowClear: true },
+      helpMessage: '无标准的指标评估为「无标准」',
     },
     {
       label: '预警状态',
       field: 'warningStatus',
       component: 'Select',
       componentProps: { options: WARNING_STATUS_OPTIONS, allowClear: true },
+      dynamicDisabled: true,
+      helpMessage: '保存时按评估结果自动计算：较差→红色预警；一般/无标准→黄色预警；很好/较好→正常',
     },
     {
       label: '指标来源',
       field: 'indicatorSource',
       component: 'Input',
-      componentProps: { maxlength: 50 },
+      dynamicDisabled: true,
     },
     {
       label: '数据来源',
       field: 'dataSource',
       component: 'Input',
-      componentProps: { maxlength: 50 },
+      dynamicDisabled: true,
     },
     {
       label: '责任部门',
       field: 'responsibleDept',
       component: 'Input',
-      componentProps: { maxlength: 50 },
+      dynamicDisabled: true,
     },
     {
       label: '备注',
@@ -185,8 +185,22 @@
       }
       return;
     }
-    // TODO: 后端接入后在此调用保存接口
-    setTimeout(closeDrawer);
-    emit('success', data);
+    setDrawerProps({ loading: true });
+    try {
+      const { warningStatus } = await indicatorResultSave({
+        id: record.value.id,
+        indicatorValue: data.indicatorValue,
+        standardValue: data.standardValue,
+        evalResult: data.evalResult,
+        remarks: data.remarks,
+      });
+      showMessage(`保存成功${warningStatus ? `（预警状态：${warningStatus}）` : ''}`);
+      setTimeout(closeDrawer);
+      emit('success', data);
+    } catch (e: any) {
+      showMessage(e?.message || '保存失败', 'error');
+    } finally {
+      setDrawerProps({ loading: false });
+    }
   }
 </script>

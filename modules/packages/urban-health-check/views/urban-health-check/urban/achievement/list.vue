@@ -5,12 +5,11 @@
    - 链接地址:/urban-health-check/urban/achievement/list
    - 组件位置:/urban-health-check/urban/achievement/list(与链接地址一致)
    - 是否可见:显示
-  show 页路由(RESTful,后端隐藏菜单,待注册):
-   - 链接地址:/urban-health-check/urban/achievement/{id}({id}=记录编码 code)
+  show 页路由(RESTful,后端隐藏菜单,已注册):
+   - 链接地址:/urban-health-check/urban/achievement/{id}({id}=记录编码 code=sort_no)
    - 组件位置:/urban-health-check/urban/achievement/_id/list;上级菜单挂「体检成果管理」点亮侧边栏
-  组件格式对齐 satisfaction-survey/list.vue;
-  当前后端尚未介入，页面为纯 UI：不发起任何接口请求；
-  字段与假数据定义见 @jeesite/urban-health-check/api/urban-health-check/urban/achievement。
+  接口已接入：achievementPage / achievementDelete（/cityCheck/achievement）。
+  成果目录为固定五类清单（Select），已提交的目录只读。
 -->
 <template>
   <PageWrapper>
@@ -48,21 +47,28 @@
   import { Tag } from 'antdv-next';
   import { router } from '@jeesite/core/router';
   import { useGo } from '@jeesite/core/hooks/web/usePage';
+  import { useMessage } from '@jeesite/core/hooks/web/useMessage';
   import { Icon } from '@jeesite/core/components/Icon';
   import { PageWrapper } from '@jeesite/core/components/Page';
   import { BasicTable, BasicColumn, useTable } from '@jeesite/core/components/Table';
   import { useDrawer } from '@jeesite/core/components/Drawer';
   import { FormProps } from '@jeesite/core/components/Form';
   import type { Achievement } from '@jeesite/urban-health-check/api/urban-health-check/urban/achievement';
-  import { MOCK_LIST } from '@jeesite/urban-health-check/api/urban-health-check/urban/achievement';
+  import {
+    ACHIEVEMENT_CATALOGS,
+    achievementDelete,
+    achievementPage,
+  } from '@jeesite/urban-health-check/api/urban-health-check/urban/achievement';
   import {
     SUBMIT_STATUS,
     YEAR_OPTIONS,
   } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator-system';
+  import { toOptions } from '@jeesite/urban-health-check/api/urban-health-check/common';
   import InputForm from './form.vue';
 
   const { meta } = unref(router.currentRoute);
   const go = useGo();
+  const { showMessage } = useMessage();
   const getTitle = {
     icon: meta.icon || 'ant-design:book-outlined',
     value: meta.title || '体检成果管理',
@@ -82,7 +88,8 @@
       {
         label: '体检成果目录',
         field: 'catalog',
-        component: 'Input',
+        component: 'Select',
+        componentProps: { options: toOptions(ACHIEVEMENT_CATALOGS), allowClear: true },
       },
     ],
   };
@@ -96,7 +103,7 @@
     { title: '提交状态', dataIndex: 'submitStatus', width: 110, align: 'center', slot: 'submitStatus' },
   ];
 
-  /** 操作列 */
+  /** 操作列（已提交只读） */
   const actionColumn: BasicColumn = {
     width: 150,
     actions: (record: Recordable) => [
@@ -107,18 +114,20 @@
       {
         label: '编辑',
         onClick: () => handleForm({ ...record, isNewRecord: false }),
+        ifShow: () => record.submitStatus === SUBMIT_STATUS.PENDING,
       },
       {
         label: '删除',
         color: 'error',
         popConfirm: { title: '是否确认删除该成果目录？', confirm: () => handleDelete(record) },
+        ifShow: () => record.submitStatus === SUBMIT_STATUS.PENDING,
       },
     ],
   };
 
   const [registerDrawer, { openDrawer, setDrawerProps }] = useDrawer();
-  const [registerTable] = useTable({
-    dataSource: MOCK_LIST,
+  const [registerTable, { reload }] = useTable({
+    api: achievementPage,
     columns: tableColumns,
     actionColumn: actionColumn,
     formConfig: searchForm,
@@ -135,18 +144,24 @@
     openDrawer(true, record);
   }
 
-  /** 打开该成果目录的 show 页(RESTful:/…/achievement/{id},{id}=记录编码 code) */
+  /** 打开该成果目录的 show 页(RESTful:/…/achievement/{code},{id}=记录编码 code) */
   function handleDetail(record: Recordable) {
     go(`/urban-health-check/urban/achievement/${record.code}`);
   }
 
   /** 删除 */
-  function handleDelete(_record: Achievement) {
-    // TODO: 后端接入后调用删除接口并刷新列表
+  async function handleDelete(record: Achievement) {
+    try {
+      await achievementDelete([record.id!]);
+      showMessage('删除成功');
+      reload();
+    } catch (e: any) {
+      showMessage(e?.message || '删除失败', 'error');
+    }
   }
 
-  /** 表单保存成功回调（后端接入后在此 reload 列表） */
+  /** 表单保存成功回调：刷新列表 */
   function handleSuccess() {
-    // TODO: 后端接入后刷新列表
+    reload();
   }
 </script>

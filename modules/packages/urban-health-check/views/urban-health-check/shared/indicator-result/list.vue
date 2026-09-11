@@ -5,12 +5,12 @@
    - 链接地址:/urban-health-check/urban/indicator-result/list
    - 组件位置:/urban-health-check/urban/indicator-result/list(与链接地址一致)
    - 是否可见:显示
-  show 页路由(RESTful,后端隐藏菜单,待注册):
+  show 页路由(RESTful,后端隐藏菜单,已注册):
    - 链接地址:/urban-health-check/urban/indicator-result/{id}(与 /list 静态段不冲突)
    - 上级菜单挂「指标项结果管理」以点亮侧边栏(配方同 indicator-system)
-  组件格式 / 页面布局对齐 indicator-system/list.vue；
-  当前后端尚未介入，页面为纯 UI：不发起任何接口请求；
-  字段与假数据定义见 @jeesite/urban-health-check/api/urban-health-check/urban/indicator-result。
+  接口已接入：indicatorResultStatPage（/cityCheck/indicatorResult/statPage）。
+  统计行（指标数量/已填报/未填报/预警数）为按体系派生的只读数据（US-4.1 跟踪口径），
+  无新增/编辑/删除；点击体系名称进入 show 页维护结果明细。
 -->
 <template>
   <PageWrapper>
@@ -18,11 +18,6 @@
       <template #tableTitle>
         <Icon :icon="getTitle.icon" class="m-1 pr-1" />
         <span> {{ getTitle.value }} </span>
-      </template>
-      <template #toolbar>
-        <a-button type="primary" @click="handleForm({ isNewRecord: true })">
-          <Icon icon="i-fluent:add-12-filled" /> 新增
-        </a-button>
       </template>
       <template #firstColumn="{ record }">
         <a @click="handleDetail(record)" :title="record.indicatorName">
@@ -33,8 +28,6 @@
         {{ (record.functionPosition || []).join('、') }}
       </template>
     </BasicTable>
-
-    <InputForm :district="district" @register="registerDrawer" @success="handleSuccess" />
   </PageWrapper>
 </template>
 <script lang="ts" setup name="UhcSharedIndicatorResultList">
@@ -44,12 +37,9 @@
   import { Icon } from '@jeesite/core/components/Icon';
   import { PageWrapper } from '@jeesite/core/components/Page';
   import { BasicTable, BasicColumn, useTable } from '@jeesite/core/components/Table';
-  import { useDrawer } from '@jeesite/core/components/Drawer';
   import { FormProps } from '@jeesite/core/components/Form';
-  import type { IndicatorResult } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator-result';
-  import { MOCK_LIST } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator-result';
+  import { indicatorResultStatPage } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator-result';
   import { YEAR_OPTIONS } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator-system';
-  import InputForm from './form.vue';
   import {
     DISTRICTS,
     FUNCTION_POSITIONS,
@@ -130,56 +120,17 @@
     { title: '预警指标数量（项）', dataIndex: 'warningCount', width: 140, align: 'center' as const },
   ];
 
-  /** 操作列 */
-  const actionColumn: BasicColumn = {
-    width: 150,
-    actions: (record: Recordable) => [
-      {
-        label: '查看',
-        onClick: () => handleForm({ ...record, isNewRecord: false, isView: true }),
-      },
-      {
-        label: '编辑',
-        onClick: () => handleForm({ ...record, isNewRecord: false }),
-      },
-      {
-        label: '删除',
-        color: 'error',
-        popConfirm: { title: '是否确认删除该结果？', confirm: () => handleDelete(record) },
-      },
-    ],
-  };
-
-  const [registerDrawer, { openDrawer, setDrawerProps }] = useDrawer();
   const [registerTable] = useTable({
-    dataSource: MOCK_LIST,
+    api: indicatorResultStatPage,
     columns: tableColumns,
-    actionColumn: actionColumn,
-    formConfig: searchForm,
     showTableSetting: true,
     useSearchForm: true,
     pagination: true,
     canResize: true,
   });
 
-  function handleForm(record: Recordable) {
-    // 打开前先按查看/编辑设好 showFooter(抽屉级);打开动画期间翻转会导致首次不弹(见对应 form.vue 头注释)
-    setDrawerProps({ showFooter: !record.isView });
-    openDrawer(true, record);
-  }
-
-  /** 打开该结果的 show 页(RESTful:/…/indicator-result/{id}) */
+  /** 打开该体系的结果 show 页(RESTful:/…/indicator-result/{code}) */
   function handleDetail(record: Recordable) {
     go(`${props.routeBase}/${record.code}`);
-  }
-
-  /** 删除 */
-  function handleDelete(_record: IndicatorResult) {
-    // TODO: 后端接入后调用删除接口并刷新列表
-  }
-
-  /** 表单保存成功回调（后端接入后在此 reload 列表） */
-  function handleSuccess() {
-    // TODO: 后端接入后刷新列表
   }
 </script>

@@ -1,10 +1,10 @@
 <!--
   市住更局 —— 满意度调查问题 新增/编辑/查看 表单抽屉
 
-  组件格式对齐 indicator-system/_id/form.vue:
-   - BasicDrawer + useDrawerInner + BasicForm(FormSchema);
-   - 查看模式:表单 disabled + 抽屉隐藏底部按钮。
-  当前后端尚未介入:保存仅做表单校验后关闭抽屉,不发起任何接口请求。
+  组件格式对齐 indicator-system/_id/form.vue。
+  问题行为"整单提交"：本表单不做接口调用，校验通过后把表单值回传父级
+  （emit('success', row, values)），由父级维护完整问题列表后整单 saveList。
+  五档占比任一档填写即要求合计 100（提交时前端校验，与后端口径一致）。
 -->
 <template>
   <BasicDrawer v-bind="$attrs" force-render width="70%" @register="registerDrawer" @ok="handleSubmit">
@@ -25,6 +25,11 @@
   import type { SurveyQuestion } from '@jeesite/urban-health-check/api/urban-health-check/urban/satisfaction-survey';
 
   const emit = defineEmits(['success', 'register']);
+
+  const props = defineProps({
+    /** 所属调查已提交时整个表单只读（父级传入） */
+    readOnly: { type: Boolean, default: false },
+  });
 
   const { showMessage } = useMessage();
   const { meta } = unref(router.currentRoute);
@@ -57,6 +62,7 @@
       field: 'target',
       component: 'Input',
       componentProps: { maxlength: 50 },
+      helpMessage: '如：全体居民 / 社区居民 / 企业经营者',
     },
     {
       label: '满意度占比',
@@ -118,14 +124,14 @@
     await setFieldsValue({
       questionName: record.value.questionName ?? '',
       target: record.value.target ?? '',
-      verySatisfied: record.value.verySatisfied ?? 0,
-      satisfied: record.value.satisfied ?? 0,
-      neutral: record.value.neutral ?? 0,
-      dissatisfied: record.value.dissatisfied ?? 0,
-      veryDissatisfied: record.value.veryDissatisfied ?? 0,
+      verySatisfied: record.value.verySatisfied,
+      satisfied: record.value.satisfied,
+      neutral: record.value.neutral,
+      dissatisfied: record.value.dissatisfied,
+      veryDissatisfied: record.value.veryDissatisfied,
       remarks: record.value.remarks ?? '',
     });
-    await setProps({ disabled: isView.value });
+    await setProps({ disabled: isView.value || props.readOnly });
     setDrawerProps({ loading: false });
   });
 
@@ -143,8 +149,19 @@
       }
       return;
     }
-    // TODO: 后端接入后在此调用保存接口(可校验五档占比合计 100)
+    // 五档占比任一档有值时合计须为 100（与后端校验口径一致）
+    const rates = ['verySatisfied', 'satisfied', 'neutral', 'dissatisfied', 'veryDissatisfied'].map(
+      (key) => Number(data[key] ?? 0),
+    );
+    if (rates.some((rate) => rate > 0)) {
+      const sum = Math.round(rates.reduce((acc, cur) => acc + cur, 0) * 100) / 100;
+      if (Math.abs(sum - 100) > 0.01) {
+        showMessage(`五档满意度占比合计须为 100（当前 ${sum}）`);
+        return;
+      }
+    }
     setTimeout(closeDrawer);
-    emit('success', data);
+    // 不直接调接口：回传父级由整单 saveList 提交
+    emit('success', record.value, data);
   }
 </script>

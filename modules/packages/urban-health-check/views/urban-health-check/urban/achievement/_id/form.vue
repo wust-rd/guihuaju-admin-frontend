@@ -1,11 +1,8 @@
 <!--
   市住更局 —— 体检成果分析明细 新增/编辑/查看 表单抽屉
 
-  组件格式对齐 achievement/form.vue:
-   - BasicDrawer + useDrawerInner + BasicForm(FormSchema);
-   - 查看模式：表单 disabled + 抽屉隐藏底部按钮（抽屉级 showFooter 由父级打开前设置，
-     本组件加 force-render；原因见 indicator-system/form.vue 头注释）。
-  当前后端尚未介入：保存仅做表单校验后关闭抽屉，不发起任何接口请求。
+  组件格式对齐 achievement/form.vue；接口已接入 achievementDetailSave
+  （{id?, catalogId, dim1, analysis, degree}）。
 -->
 <template>
   <BasicDrawer v-bind="$attrs" force-render width="70%" @register="registerDrawer" @ok="handleSubmit">
@@ -24,9 +21,17 @@
   import { BasicForm, FormSchema, useForm } from '@jeesite/core/components/Form';
   import { BasicDrawer, useDrawerInner } from '@jeesite/core/components/Drawer';
   import type { AchievementAnalysis } from '@jeesite/urban-health-check/api/urban-health-check/urban/achievement';
-  import { ACHIEVEMENT_DEGREE } from '@jeesite/urban-health-check/api/urban-health-check/urban/achievement';
+  import {
+    ACHIEVEMENT_DEGREE,
+    achievementDetailSave,
+  } from '@jeesite/urban-health-check/api/urban-health-check/urban/achievement';
 
   const emit = defineEmits(['success', 'register']);
+
+  const props = defineProps({
+    /** 所属成果目录已提交时整个表单只读（父级传入） */
+    readOnly: { type: Boolean, default: false },
+  });
 
   const { showMessage } = useMessage();
   const { meta } = unref(router.currentRoute);
@@ -102,7 +107,7 @@
       analysis: record.value.analysis ?? '',
       remarks: record.value.remarks ?? '',
     });
-    await setProps({ disabled: isView.value });
+    await setProps({ disabled: isView.value || props.readOnly });
     setDrawerProps({ loading: false });
   });
 
@@ -120,8 +125,20 @@
       }
       return;
     }
-    // TODO: 后端接入后在此调用保存接口
-    setTimeout(closeDrawer);
-    emit('success', data);
+    setDrawerProps({ loading: true });
+    try {
+      await achievementDetailSave({
+        ...data,
+        id: record.value.isNewRecord ? undefined : record.value.id,
+        catalogId: record.value.catalogId!,
+      });
+      showMessage('保存成功');
+      setTimeout(closeDrawer);
+      emit('success', data);
+    } catch (e: any) {
+      showMessage(e?.message || '保存失败', 'error');
+    } finally {
+      setDrawerProps({ loading: false });
+    }
   }
 </script>

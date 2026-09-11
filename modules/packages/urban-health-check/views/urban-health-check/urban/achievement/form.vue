@@ -1,11 +1,8 @@
 <!--
   市住更局 —— 体检成果 新增/编辑/查看 表单抽屉
 
-  组件格式对齐 satisfaction-survey/form.vue:
-   - BasicDrawer + useDrawerInner + BasicForm(FormSchema);
-   - 查看模式：表单 disabled + 抽屉隐藏底部按钮（抽屉级 showFooter 由父级打开前设置，
-     本组件加 force-render；原因见 indicator-system/form.vue 头注释）。
-  当前后端尚未介入：保存仅做表单校验后关闭抽屉，不发起任何接口请求。
+  组件格式对齐 satisfaction-survey/form.vue；接口已接入 achievementSave。
+  体检成果目录为固定五类清单（Select）；提交状态由"提交发布"动作驱动，表单只读展示。
 -->
 <template>
   <BasicDrawer v-bind="$attrs" force-render width="70%" @register="registerDrawer" @ok="handleSubmit">
@@ -25,9 +22,14 @@
   import { BasicDrawer, useDrawerInner } from '@jeesite/core/components/Drawer';
   import type { Achievement } from '@jeesite/urban-health-check/api/urban-health-check/urban/achievement';
   import {
+    ACHIEVEMENT_CATALOGS,
+    achievementSave,
+  } from '@jeesite/urban-health-check/api/urban-health-check/urban/achievement';
+  import {
     SUBMIT_STATUS,
     YEAR_OPTIONS,
   } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator-system';
+  import { toOptions } from '@jeesite/urban-health-check/api/urban-health-check/common';
 
   const emit = defineEmits(['success', 'register']);
 
@@ -41,12 +43,6 @@
     icon: meta.icon || 'ant-design:book-outlined',
     value: isView.value ? '查看体检成果' : record.value.isNewRecord ? '新增体检成果' : '编辑体检成果',
   }));
-
-  /** 提交状态下拉选项 */
-  const SUBMIT_OPTIONS = [
-    { label: '待提交', value: SUBMIT_STATUS.PENDING },
-    { label: '已提交', value: SUBMIT_STATUS.SUBMITTED },
-  ];
 
   const inputFormSchemas: FormSchema[] = [
     {
@@ -65,9 +61,9 @@
     {
       label: '体检成果目录',
       field: 'catalog',
-      component: 'Input',
-      componentProps: { maxlength: 100 },
-      rules: [{ required: true, message: '请输入体检成果目录' }],
+      component: 'Select',
+      componentProps: { options: toOptions(ACHIEVEMENT_CATALOGS), allowClear: true },
+      rules: [{ required: true, message: '请选择体检成果目录' }],
     },
     {
       label: '填报时间',
@@ -80,8 +76,14 @@
       label: '提交状态',
       field: 'submitStatus',
       component: 'Select',
-      componentProps: { options: SUBMIT_OPTIONS },
-      defaultValue: SUBMIT_STATUS.PENDING,
+      componentProps: {
+        options: [
+          { label: '待提交', value: SUBMIT_STATUS.PENDING },
+          { label: '已提交', value: SUBMIT_STATUS.SUBMITTED },
+        ],
+      },
+      helpMessage: '提交状态由"提交发布"动作驱动：保存=待提交，提交后成果只读',
+      dynamicDisabled: true,
     },
     {
       label: '备注',
@@ -129,8 +131,19 @@
       }
       return;
     }
-    // TODO: 后端接入后在此调用保存接口
-    setTimeout(closeDrawer);
-    emit('success', data);
+    setDrawerProps({ loading: true });
+    try {
+      await achievementSave({
+        ...data,
+        id: record.value.isNewRecord ? undefined : record.value.id,
+      });
+      showMessage('保存成功');
+      setTimeout(closeDrawer);
+      emit('success', data);
+    } catch (e: any) {
+      showMessage(e?.message || '保存失败', 'error');
+    } finally {
+      setDrawerProps({ loading: false });
+    }
   }
 </script>

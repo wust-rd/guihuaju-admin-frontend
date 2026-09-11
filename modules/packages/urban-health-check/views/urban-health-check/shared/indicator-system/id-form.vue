@@ -4,7 +4,8 @@
   组件格式对齐 indicator-system/form.vue:
    - BasicDrawer + useDrawerInner + BasicForm(FormSchema);
    - 查看模式:表单 disabled + 抽屉隐藏底部按钮。
-  当前后端尚未介入:保存仅做表单校验后关闭抽屉,不发起任何接口请求。
+  接口已接入：indicatorSave（systemCode 归属体系，后端解析）。
+  指标单位/指标来源/数据来源 为后端表非空列，前端同步设为必填。
 -->
 <template>
   <BasicDrawer v-bind="$attrs" force-render width="70%" @register="registerDrawer" @ok="handleSubmit">
@@ -23,8 +24,14 @@
   import { BasicForm, FormSchema, useForm } from '@jeesite/core/components/Form';
   import { BasicDrawer, useDrawerInner } from '@jeesite/core/components/Drawer';
   import type { Indicator } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator';
+  import { indicatorSave } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator';
 
   const emit = defineEmits(['success', 'register']);
+
+  const props = defineProps({
+    /** 所属体系已提交时整个表单只读（父级传入） */
+    readOnly: { type: Boolean, default: false },
+  });
 
   const { showMessage } = useMessage();
   const { meta } = unref(router.currentRoute);
@@ -83,24 +90,28 @@
       field: 'unit',
       component: 'Input',
       componentProps: { maxlength: 20 },
+      rules: [{ required: true, message: '请输入指标单位' }],
     },
     {
       label: '指标来源',
       field: 'indicatorSource',
       component: 'Input',
       componentProps: { maxlength: 50 },
+      rules: [{ required: true, message: '请输入指标来源' }],
     },
     {
       label: '数据来源',
       field: 'dataSource',
       component: 'Input',
       componentProps: { maxlength: 50 },
+      rules: [{ required: true, message: '请输入数据来源' }],
     },
     {
       label: '责任部门',
       field: 'responsibleDept',
       component: 'Input',
       componentProps: { maxlength: 50 },
+      helpMessage: '无责任部门时填 /',
     },
     {
       label: '备注',
@@ -134,7 +145,7 @@
       responsibleDept: record.value.responsibleDept ?? '',
       remarks: record.value.remarks ?? '',
     });
-    await setProps({ disabled: isView.value });
+    await setProps({ disabled: isView.value || props.readOnly });
     setDrawerProps({ loading: false });
   });
 
@@ -152,8 +163,20 @@
       }
       return;
     }
-    // TODO: 后端接入后在此调用保存接口
-    setTimeout(closeDrawer);
-    emit('success', data);
+    setDrawerProps({ loading: true });
+    try {
+      await indicatorSave({
+        ...data,
+        id: record.value.isNewRecord ? undefined : record.value.id,
+        systemCode: record.value.systemCode,
+      });
+      showMessage('保存成功');
+      setTimeout(closeDrawer);
+      emit('success', data);
+    } catch (e: any) {
+      showMessage(e?.message || '保存失败', 'error');
+    } finally {
+      setDrawerProps({ loading: false });
+    }
   }
 </script>

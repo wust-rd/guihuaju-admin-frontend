@@ -10,7 +10,8 @@
    - 抽屉级 showFooter 由 list.vue 在打开前经 setDrawerProps 设置——打开动画期间
      增删 footer DOM 会打断面板渲染,导致首次点击不弹;
    - 表单级 disabled 在回调里设置即可(抽屉体内,安全)。
-  当前后端尚未介入：保存仅做表单校验后关闭抽屉，不发起任何接口请求。
+  接口已接入：保存 POST /cityCheck/indicatorSet/save（indicatorSystemSave）。
+  提交状态为体系生命周期字段（保存=暂存、提交发布动作置已提交），表单中只读展示不可改。
 -->
 <template>
   <BasicDrawer v-bind="$attrs" force-render width="70%" @register="registerDrawer" @ok="handleSubmit">
@@ -39,6 +40,7 @@
     ENABLED_STATUS,
     SUBMIT_STATUS,
     YEAR_OPTIONS,
+    indicatorSystemSave,
   } from '@jeesite/urban-health-check/api/urban-health-check/urban/indicator-system';
 
   const emit = defineEmits(['success', 'register']);
@@ -58,11 +60,6 @@
     icon: meta.icon || 'ant-design:book-outlined',
     value: isView.value ? '查看指标体系' : record.value.isNewRecord ? '新增指标体系' : '编辑指标体系',
   }));
-
-  const SUBMIT_OPTIONS = [
-    { label: '待提交', value: SUBMIT_STATUS.PENDING },
-    { label: '已提交', value: SUBMIT_STATUS.SUBMITTED },
-  ];
 
   const inputFormSchemas: FormSchema[] = [
     {
@@ -120,6 +117,7 @@
       field: 'indicatorCount',
       component: 'InputNumber',
       componentProps: { min: 0, style: 'width: 100%' },
+      helpMessage: '体系声明的"系统指标项"总数，用作填报进度分母；指标项实际录入数可少于该值',
       rules: [{ required: true, message: '请输入指标数量' }],
     },
     {
@@ -150,7 +148,14 @@
       label: '提交状态',
       field: 'submitStatus',
       component: 'Select' as const,
-      componentProps: { options: SUBMIT_OPTIONS },
+      componentProps: {
+        options: [
+          { label: '待提交', value: SUBMIT_STATUS.PENDING },
+          { label: '已提交', value: SUBMIT_STATUS.SUBMITTED },
+        ],
+      },
+      helpMessage: '提交状态由"提交发布"动作驱动：保存=待提交，提交后体系只读',
+      dynamicDisabled: true,
     },
     {
       label: '备注',
@@ -205,8 +210,20 @@
       }
       return;
     }
-    // TODO: 后端接入后在此调用保存接口
-    setTimeout(closeDrawer);
-    emit('success', data);
+    setDrawerProps({ loading: true });
+    try {
+      await indicatorSystemSave({
+        ...data,
+        // 编辑时带主键；新增留空由后端生成并自动产生 code
+        id: record.value.isNewRecord ? undefined : record.value.id,
+      });
+      showMessage('保存成功');
+      setTimeout(closeDrawer);
+      emit('success', data);
+    } catch (e: any) {
+      showMessage(e?.message || '保存失败', 'error');
+    } finally {
+      setDrawerProps({ loading: false });
+    }
   }
 </script>
