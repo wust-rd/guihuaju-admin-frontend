@@ -136,6 +136,9 @@
   } from '@jeesite/ifco/api/ifco/effect-fill';
   import ResizableTitle from '@jeesite/core/components/Table/src/components/ResizableTitle.vue';
   import { exportEffectExcel } from './export-excel';
+  import { handleCellNav } from '../shared/cell-nav';
+  import { createAutoPersist } from '../shared/dirty-persist';
+  import { createBringInController } from '../shared/bring-in';
 
   /** 表格行(指标) */
   type FillRow = {
@@ -259,23 +262,8 @@
     dirtyCols.delete(col.key);
   }
 
-  /** 切换前自动落库:把当前全部脏列依次保存;失败列保留在登记中并提示 */
-  async function autoPersistDirty() {
-    if (!dirtyCols.size) return;
-    let failed = 0;
-    let firstError = '';
-    for (const [, col] of [...dirtyCols]) {
-      try {
-        await persistColumn(col);
-      } catch (e: unknown) {
-        failed += 1;
-        firstError ||= e instanceof Error ? e.message : '保存失败';
-      }
-    }
-    if (failed > 0) {
-      showMessage(`自动保存：有 ${failed} 列失败（${firstError}），该列仍待保存，可点顶部「保存」重试`);
-    }
-  }
+  /** 切换前自动落库(共用工厂):把当前全部脏列依次保存;失败列保留在登记中并提示 */
+  const autoPersistDirty = createAutoPersist(dirtyCols, (col) => persistColumn(col), showMessage);
 
   // ── 新增项目:居中 Modal 命名,确认后追加最右列并滚动到位 ──────────────
   const addModalOpen = ref(false);
@@ -331,65 +319,22 @@
   }
 
   // ── 带入上一季度(服务端复制;成效域独立计数,普通模式每周期×单位限一次) ─
-  const bringModalOpen = ref(false);
-  const bringing = ref(false);
-
-  function handleBringIn() {
-    if (!reportUnit.value || loading.value) return;
-    bringModalOpen.value = true;
-  }
-
-  /** 执行带入(普通/仅名称/强制):先自动落库脏列,成功后整包重载 */
-  async function doBringIn(mode: 'normal' | 'names' | 'force') {
-    if (bringing.value || !reportUnit.value) return;
-    if (mode === 'normal' && broughtIn.value) {
-      showMessage('已执行过数据带入');
-      return;
-    }
-    bringing.value = true;
-    try {
-      await autoPersistDirty();
-      const res = await bringInPrevPeriod({
-        year: year.value,
-        quarter: quarter.value,
-        unit: reportUnit.value,
-        force: mode === 'force',
-        namesOnly: mode === 'names',
-      });
-      if (mode === 'names') {
-        showMessage(
-          `已带入 ${res.fromYear} 年${quarterLabel(res.fromQuarter)}的项目名称 ${res.broughtProjectCount} 列（值留空，由您填写）`,
-        );
-      } else {
-        const parts = [`新增 ${res.broughtProjectCount} 列`];
-        if (res.overwrittenProjectCount) parts.push(`覆盖同名 ${res.overwrittenProjectCount} 列`);
-        if (res.skippedProjectCount) parts.push(`跳过同名 ${res.skippedProjectCount} 列`);
-        showMessage(
-          `已${mode === 'force' ? '强制' : ''}带入 ${res.fromYear} 年${quarterLabel(res.fromQuarter)}数据（${parts.join('，')}）`,
-        );
-      }
-      bringModalOpen.value = false;
-      resetEditState();
-      dirtyCols.clear();
-      await loadFill();
-    } catch (e: unknown) {
-      showMessage(e instanceof Error ? e.message : '带入失败');
-    } finally {
-      bringing.value = false;
-    }
-  }
-
-  /** 强制带入:二次确认(覆盖同名项目列数据) */
-  function handleForceBringIn() {
-    Modal.confirm({
-      title: '强制带入确认',
-      content: '本季度同名项目列的数值将被上一季度数据覆盖，当前已修改的内容会丢失，确定继续吗？',
-      okText: '强制带入',
-      okType: 'danger',
-      cancelText: '取消',
-      onOk: () => doBringIn('force'),
+  // 带入弹窗(共用工厂):普通/仅名称/强制三模式,先自动落库脏列再执行
+  const { bringModalOpen, bringing, handleBringIn, doBringIn, handleForceBringIn } =
+    createBringInController({
+      reportUnit,
+      year,
+      quarter,
+      loading,
+      broughtIn,
+      bringInApi: bringInPrevPeriod,
+      autoPersistDirty,
+      reload: loadFill,
+      resetEditState,
+      clearDirty: () => dirtyCols.clear(),
+      quarterLabel,
+      showMessage,
     });
-  }
 
   /** 顶部保存:把全部脏列依次落库 */
   async function handleSave() {
@@ -490,40 +435,6 @@
     dirtyCols.set(col.key, col);
   }
 
-  // ── 单元格键盘导航:Enter/↓ = 下一个可填单元格,↑ = 上一个 ──────────────
-  // 仅编辑列纵向跳(其它列没有输入框),自动跳过汇总/说明等只读行;
-  // 双值格(数|面积)同行两框先左右衔接,行尾再跳下一行;
-  // 捕获阶段拦截并阻断冒泡,抢在 InputNumber 自身的上下键调值之前。
-
-  function focusCellInput(el: HTMLElement) {
-    el.focus();
-    (el as HTMLInputElement).select?.();
-  }
-
-  function handleCellNav(e: KeyboardEvent) {
-    if (e.key !== 'Enter' && e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-    e.preventDefault();
-    e.stopPropagation();
-    const cur = e.target as HTMLInputElement;
-    const row = cur.closest('tr');
-    if (!row) return;
-    const down = e.key !== 'ArrowUp';
-    const rowInputs = Array.from(row.querySelectorAll('input'));
-    const inRowNext = down ? rowInputs[rowInputs.indexOf(cur) + 1] : rowInputs[rowInputs.indexOf(cur) - 1];
-    if (inRowNext) {
-      focusCellInput(inRowNext);
-      return;
-    }
-    let r: HTMLElement | null = row;
-    while ((r = (down ? r.nextElementSibling : r.previousElementSibling) as HTMLElement | null)) {
-      const list = Array.from(r.querySelectorAll('input'));
-      const target = down ? list[0] : list[list.length - 1];
-      if (target) {
-        focusCellInput(target);
-        return;
-      }
-    }
-  }
 
   /** 单元格:编辑列内的填报行渲染输入控件(双值行两个框中间固定竖线),其余为只读文本 */
   function renderFillCell(item: EffectIndicatorDef, col: ProjectColumn) {
