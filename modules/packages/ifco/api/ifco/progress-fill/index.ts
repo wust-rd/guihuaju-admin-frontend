@@ -13,6 +13,7 @@
  */
 
 import { reactive } from 'vue';
+import { match } from 'ts-pattern';
 import { defHttp } from '@jeesite/core/utils/http/axios';
 import { useGlobSetting } from '@jeesite/core/hooks/setting';
 import type { CategoryDef, ProjectColumn, TabFillData, PeriodFillData } from '../common';
@@ -395,19 +396,25 @@ export async function loadProgressStatData(
  * 填报行 = 已填值（未填返回 undefined）。
  */
 export function cellValue(item: IndicatorDef, column: ProjectColumn): number | string | undefined {
-  if (item.kind === 'sum') {
-    let sum = 0;
-    for (const partKey of item.parts ?? []) {
-      const part = INDICATOR_MAP[partKey];
-      const value = part ? cellValue(part, column) : undefined;
-      if (typeof value === 'number') sum += value;
-    }
-    return sum;
-  }
-  if (item.kind === 'count' || item.kind === 'total') return undefined;
-  const value = column.values[item.key];
-  if (Array.isArray(value)) return undefined;
-  return value === undefined || value === '' ? undefined : value;
+  return match(item.kind)
+    .with('sum', () => {
+      let sum = 0;
+      for (const partKey of item.parts ?? []) {
+        const part = INDICATOR_MAP[partKey];
+        const value = part ? cellValue(part, column) : undefined;
+        if (typeof value === 'number') sum += value;
+      }
+      return sum;
+    })
+    // 自动行不落单元格
+    .with('count', 'total', () => undefined)
+    .with('fill', 'text', () => {
+      const value = column.values[item.key];
+      if (Array.isArray(value)) return undefined;
+      return value === undefined || value === '' ? undefined : value;
+    })
+    // kind 新增种类而漏处理时编译报错,而不是静默落默认分支
+    .exhaustive();
 }
 
 /**
@@ -415,24 +422,32 @@ export function cellValue(item: IndicatorDef, column: ProjectColumn): number | s
  * total 行 = 直接录入的合计值；count 行 = 项目列数；text 行无合计；其余 = 各列之和。
  */
 export function tabTotal(item: IndicatorDef, tab: TabFillData | undefined): number | undefined {
-  if (item.kind === 'total') return tab?.totals?.[item.key];
-  if (item.kind === 'count') return tab?.projects.length ?? 0;
-  if (item.kind === 'text') return undefined;
-  let sum = 0;
-  for (const column of tab?.projects ?? []) {
-    const value = cellValue(item, column);
-    if (typeof value === 'number') sum += value;
-  }
-  return sum;
+  return match(item.kind)
+    .with('total', () => tab?.totals?.[item.key])
+    .with('count', () => tab?.projects.length ?? 0)
+    .with('text', () => undefined)
+    .with('fill', 'sum', () => {
+      let sum = 0;
+      for (const column of tab?.projects ?? []) {
+        const value = cellValue(item, column);
+        if (typeof value === 'number') sum += value;
+      }
+      return sum;
+    })
+    .exhaustive();
 }
 
 /** 单个单位总览的总计：各叶子类目合计之和（text 行无总计） */
 export function grandTotal(item: IndicatorDef, periodData: PeriodFillData | undefined): number | undefined {
-  if (item.kind === 'text') return undefined;
-  let sum = 0;
-  for (const leaf of LEAF_CATEGORIES) {
-    const value = tabTotal(item, periodData?.[leaf.key]);
-    if (typeof value === 'number') sum += value;
-  }
-  return sum;
+  return match(item.kind)
+    .with('text', () => undefined)
+    .with('fill', 'sum', 'count', 'total', () => {
+      let sum = 0;
+      for (const leaf of LEAF_CATEGORIES) {
+        const value = tabTotal(item, periodData?.[leaf.key]);
+        if (typeof value === 'number') sum += value;
+      }
+      return sum;
+    })
+    .exhaustive();
 }

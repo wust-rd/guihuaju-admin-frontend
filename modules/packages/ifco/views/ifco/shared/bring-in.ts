@@ -11,6 +11,7 @@
  */
 import { ref, type Ref } from 'vue';
 import { Modal } from 'antdv-next';
+import { match } from 'ts-pattern';
 
 /** 带入结果（两域接口返回的结构子集） */
 export type BringInResultLike = {
@@ -56,15 +57,18 @@ export type BringInControllerOptions = {
   showMessage: (msg: string) => void;
 };
 
-/** 弹窗成功后的提示文案（两域共用措辞） */
+/** 弹窗成功后的提示文案（两域共用措辞）；模式穷尽匹配,新增模式漏处理时编译报错 */
 function resultMessage(mode: 'normal' | 'names' | 'force', res: BringInResultLike, quarterLabelOf: (q: string) => string) {
-  if (mode === 'names') {
-    return `已带入 ${res.fromYear} 年${quarterLabelOf(res.fromQuarter)}的项目名称 ${res.broughtProjectCount} 列（值留空，由您填写）`;
-  }
-  const parts = [`新增 ${res.broughtProjectCount} 列`];
-  if (res.overwrittenProjectCount) parts.push(`覆盖同名 ${res.overwrittenProjectCount} 列`);
-  if (res.skippedProjectCount) parts.push(`跳过同名 ${res.skippedProjectCount} 列`);
-  return `已${mode === 'force' ? '强制' : ''}带入 ${res.fromYear} 年${quarterLabelOf(res.fromQuarter)}数据（${parts.join('，')}）`;
+  const period = `${res.fromYear} 年${quarterLabelOf(res.fromQuarter)}`;
+  return match(mode)
+    .with('names', () => `已带入 ${period}的项目名称 ${res.broughtProjectCount} 列（值留空，由您填写）`)
+    .with('normal', 'force', () => {
+      const parts = [`新增 ${res.broughtProjectCount} 列`];
+      if (res.overwrittenProjectCount) parts.push(`覆盖同名 ${res.overwrittenProjectCount} 列`);
+      if (res.skippedProjectCount) parts.push(`跳过同名 ${res.skippedProjectCount} 列`);
+      return `已${mode === 'force' ? '强制' : ''}带入 ${period}数据（${parts.join('，')}）`;
+    })
+    .exhaustive();
 }
 
 export function createBringInController(options: BringInControllerOptions) {
