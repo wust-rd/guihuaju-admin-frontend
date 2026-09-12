@@ -111,8 +111,8 @@
 - **所有文件下载统一使用 `file-saver`**：`import { saveAs } from 'file-saver';` → `saveAs(blob, 文件名)`；
 - 远程文件先 `fetch(url)` 取 `blob` 再 `saveAs`；后端返回文件流（blob/ArrayBuffer）时同样经 `saveAs` 保存，文件名带扩展名（如 `${record.reportName}.pdf`）；
 - `window.open(url, '_blank')` 仅用于**预览**（新标签页），下载动作不得用它或裸 `<a download>` 替代；
-- 依赖装在使用它的业务模块内（如 `@jeesite/urban-health-check`），类型用 `@types/file-saver`；
-- **Excel 导出复用仓库既有 `xlsx`（SheetJS 0.18.5，`packages/core/components/Excel` 同源）**：业务模块按同版本声明 `xlsx` 依赖即可（零新增外部包），**勿新装 exceljs 等表格库**；简单平铺导出可用 `@jeesite/core` 的 `aoaToSheetXlsx`/`jsonToSheetXlsx`，多级合并表头直接 `utils.aoa_to_sheet` + `!merges`/`!cols`，落盘仍经 `write(..., { type: 'array' })` → `saveAs`（社区版不支持字体/填充样式与冻结窗格，属预期取舍）；业务模块新增依赖后需重启 dev server 才能被 Vite 解析；
+- 依赖一律装**前端根 package.json**（`modules/packages/*` 的 package.json 不声明依赖，import 靠目录向上解析），类型包（如 `@types/file-saver`）同样装根；
+- **Excel 导出复用仓库既有 `xlsx`（SheetJS 0.18.5，`packages/core/components/Excel` 同源）**：业务模块按同版本声明 `xlsx` 依赖即可（零新增外部包），**勿新装 exceljs 等表格库**；简单平铺导出可用 `@jeesite/core` 的 `aoaToSheetXlsx`/`jsonToSheetXlsx`，多级合并表头直接 `utils.aoa_to_sheet` + `!merges`/`!cols`，落盘仍经 `write(..., { type: 'array' })` → `saveAs`；需要**单元格样式（边框等）时改用根依赖 `xlsx-js-style`**（SheetJS 社区版写样式不支持），并给空单元格补 `{t:'s',v:''}` 使边框完整；业务模块新增依赖后需重启 dev server 才能被 Vite 解析；
 - 参照实现：`modules/packages/urban-health-check/views/urban-health-check/report-generation/list.vue` 的 `handleDownload`；Excel 多级表头导出参照 `modules/packages/ifco/views/ifco/progress-fill/export-excel.ts`。
 
 ## 抽屉查看模式约定（硬性规则）
@@ -146,3 +146,18 @@
 - `modules/packages` 目录下的代码，类型声明**一律使用 `type` 别名，不使用 `interface`**；
 - 继承语义用交叉类型表达：`type B = A & { ... }`；
 - 其他目录（`packages/*`、`web/` 等）用 `type` 还是 `interface` 不受本条约束。
+
+## ts-pattern 分支匹配约定（硬性规则）
+
+- 依赖在前端根 package.json（`ts-pattern`），用法 `import { match, P } from 'ts-pattern'`；业务模块直接 import，不单独声明依赖；
+- **必须用 match（不用 if/else 链）的场景**：分支依据是**可枚举的种类**（`kind`/`mode`/`type`/`status`/状态机状态等字面量联合类型），且满足①分支 ≥ 3 个，或②希望"新增种类而漏处理时编译报错"（穷尽性兜底）：
+  ```ts
+  return match(item.kind)
+    .with('total', () => tab?.totals?.[item.key])
+    .with('count', () => tab?.projects.length ?? 0)
+    .with('fill', 'sum', () => { /* 同分支多值并列 */ })
+    .exhaustive(); // 不要用 otherwise 兜底——会吞掉漏分支，丧失编译期保护
+  ```
+- **保持普通 if 的场景**：布尔/范围/大小等普通业务条件；热路径上仅 1~2 个 kind 早返回的检查（match 无收益）；分支种类不会扩展的一次性逻辑；
+- **已知坑**：match 回调返回元组会被 TypeScript 推宽（`[a, b]` → `number[]`），回调需标注显式返回类型，或返回处 `as [number, number]`；
+- 参照实现：`modules/packages/ifco/api/ifco/progress-fill/index.ts`（cellValue/tabTotal/grandTotal 穷尽匹配）、`modules/packages/ifco/views/ifco/shared/bring-in.ts`（resultMessage 按 mode 匹配）；布尔组合匹配参照 `packages/core/layouts/default/header/link-item.tsx`。
