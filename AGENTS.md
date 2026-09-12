@@ -161,3 +161,22 @@
 - **保持普通 if 的场景**：布尔/范围/大小等普通业务条件；热路径上仅 1~2 个 kind 早返回的检查（match 无收益）；分支种类不会扩展的一次性逻辑；
 - **已知坑**：match 回调返回元组会被 TypeScript 推宽（`[a, b]` → `number[]`），回调需标注显式返回类型，或返回处 `as [number, number]`；
 - 参照实现：`modules/packages/ifco/api/ifco/progress-fill/index.ts`（cellValue/tabTotal/grandTotal 穷尽匹配）、`modules/packages/ifco/views/ifco/shared/bring-in.ts`（resultMessage 按 mode 匹配）；布尔组合匹配参照 `packages/core/layouts/default/header/link-item.tsx`。
+
+## 模板组件引用与 import 同步（硬性规则）
+
+- `<script setup>` 模板中使用的**每个 PascalCase 组件必须在同文件显式 import**。例外仅两类：`a-*` 前缀全局注册组件、unplugin-vue-components resolver 明确覆盖的组件；`Icon`、antdv-next 全家（Card/Select/Modal/Table/RadioGroup/Input/Switch/Tooltip/Popconfirm…）、`PageWrapper`、`ResizableTitle` 等都**必须手动 import**；
+- **写/改模板时**：新引用任何组件前先看当前文件 import 块，缺就**同一次编辑补上**——禁止只改模板不动 script；
+- **拆分/搬移代码时**：import 随使用搬走，但搬完后必须**重查宿主文件模板**引用的组件是否仍有 import（把使用搬走 ≠ 把 import 删光；宿主文件后续会再往模板加组件）；
+- **为何必须当成硬规则**：vue-tsc 对模板中未解析的组件**不报类型错误**——模块级 type:check 全绿 ≠ 模板组件都有 import，此错只在浏览器运行时出现 `Failed to resolve component` 警告（组件不渲染、图标空白），是"验证方式（硬性规则）"流程的已知盲区；
+- 自查脚本（在模块 views 目录跑，无输出=通过）：模板 PascalCase 标签 ⊆ import 成员
+  ```bash
+  python3 -c "
+  import re,glob
+  for p in glob.glob('**/*.vue',recursive=True):
+      s=open(p,encoding='utf-8').read();t=s[:s.index('</template>')];sc=s[s.index('<script'):]
+      tags=set(re.findall(r'<([A-Z][A-Za-z]+)',t))
+      named={x.strip() for g in re.findall(r'import\s+\{([^}]+)\}',sc) for x in g.split(',')}
+      default=set(re.findall(r'import\s+([A-Z][A-Za-z]+)\s+from',sc))
+      m=[x for x in sorted(tags) if x not in named|default]
+      m and print(p,m)"
+  ```

@@ -61,9 +61,9 @@
 
     <Card :title="tableCardTitle">
       <template #extra>
-          <a-button v-if="unitEditable" size="small" :disabled="loading" @click="handleBringIn">
-            带入上一季度填写的项目列
-          </a-button>
+        <a-button v-if="unitEditable" size="small" :disabled="loading" @click="handleBringIn">
+          带入上一季度填写的项目列
+        </a-button>
       </template>
       <div ref="tableWrapRef">
         <Table
@@ -89,7 +89,9 @@
           强制带入，覆盖数据
         </a-button>
         <div class="flex flex-col gap-2">
-          <a-button type="primary" :loading="bringing" @click="doBringIn('normal')"> 带入上一季度填写的项目列 </a-button>
+          <a-button type="primary" :loading="bringing" @click="doBringIn('normal')">
+            带入上一季度填写的项目列
+          </a-button>
           <a-button :disabled="bringing" @click="doBringIn('names')"> 仅带入项目名称，值由我自己填写 </a-button>
         </div>
       </div>
@@ -133,6 +135,7 @@
   import { createFillEditing } from './fill-editing';
   import { createCellRenderers } from './cell-renderers';
   import { createTableColumns } from './table-columns';
+  import { Icon } from '@jeesite/core/components/Icon';
 
   const { showMessage } = useMessage();
 
@@ -195,14 +198,7 @@
   const renderers = createCellRenderers({ quarter, unitEditable, editing });
   const table = createTableColumns({ unitData, editingColKey: editing.editingColKey, colWidths, renderers });
 
-  const {
-    saving,
-    dirtyCols,
-    resetEditState,
-    handleFilterChange,
-    autoPersistDirty,
-    handleSave,
-  } = editing;
+  const { saving, dirtyCols, resetEditState, handleFilterChange, autoPersistDirty, handleSave } = editing;
   const TABLE_COMPONENTS = table.TABLE_COMPONENTS;
   const tableColumns = table.tableColumns;
   const scrollX = table.scrollX;
@@ -245,21 +241,20 @@
   }
 
   // ── 带入上一季度(服务端复制;成效域独立计数,普通模式每周期×单位限一次) ─
-  const { bringModalOpen, bringing, handleBringIn, doBringIn, handleForceBringIn } =
-    createBringInController({
-      reportUnit,
-      year,
-      quarter,
-      loading,
-      broughtIn,
-      bringInApi: bringInPrevPeriod,
-      autoPersistDirty,
-      reload: loadFill,
-      resetEditState,
-      clearDirty: () => dirtyCols.clear(),
-      quarterLabel,
-      showMessage,
-    });
+  const { bringModalOpen, bringing, handleBringIn, doBringIn, handleForceBringIn } = createBringInController({
+    reportUnit,
+    year,
+    quarter,
+    loading,
+    broughtIn,
+    bringInApi: bringInPrevPeriod,
+    autoPersistDirty,
+    reload: loadFill,
+    resetEditState,
+    clearDirty: () => dirtyCols.clear(),
+    quarterLabel,
+    showMessage,
+  });
 
   // ── 导出 ────────────────────────────────────────────────────────────
   const exporting = ref(false);
@@ -300,7 +295,6 @@
   /** 表格区域高度:视口自适应,表格内部纵向滚动(不依赖页面滚动,表头恒在视野) */
   const TABLE_HEIGHT = 'calc(100vh - 400px)';
 </script>
-
 
 <style>
   /* 节标题行(一、～八、)加粗,不加背景色 */

@@ -162,6 +162,7 @@
   import { createFillEditing } from './fill-editing';
   import { createCellRenderers } from './cell-renderers';
   import { createTableColumns } from './table-columns';
+  import { Icon } from '@jeesite/core/components/Icon';
 
   const { showMessage } = useMessage();
 
@@ -319,21 +320,20 @@
   }
 
   // ── 带入上一季度(服务端复制全部叶子类目;普通模式每周期×单位限一次) ────
-  const { bringModalOpen, bringing, handleBringIn, doBringIn, handleForceBringIn } =
-    createBringInController({
-      reportUnit,
-      year,
-      quarter,
-      loading,
-      broughtIn,
-      bringInApi: bringInPrevPeriod,
-      autoPersistDirty,
-      reload: loadFill,
-      resetEditState,
-      clearDirty: () => dirtyCols.clear(),
-      quarterLabel,
-      showMessage,
-    });
+  const { bringModalOpen, bringing, handleBringIn, doBringIn, handleForceBringIn } = createBringInController({
+    reportUnit,
+    year,
+    quarter,
+    loading,
+    broughtIn,
+    bringInApi: bringInPrevPeriod,
+    autoPersistDirty,
+    reload: loadFill,
+    resetEditState,
+    clearDirty: () => dirtyCols.clear(),
+    quarterLabel,
+    showMessage,
+  });
 
   // ── 导出 ────────────────────────────────────────────────────────────
   const exporting = ref(false);
@@ -376,7 +376,6 @@
   /** 表格区域高度:视口自适应,表格内部纵向滚动(不依赖页面滚动,表头恒在视野) */
   const TABLE_HEIGHT = 'calc(100vh - 500px)';
 </script>
-
 
 <style scoped>
   .progress-fill-radios {
