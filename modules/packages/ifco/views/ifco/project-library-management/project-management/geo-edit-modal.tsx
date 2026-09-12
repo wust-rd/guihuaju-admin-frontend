@@ -4,6 +4,7 @@ import { Button, Modal } from 'antdv-next';
 import { VMap, VMapControls, useMap, useMapLayer, tiandituStyle, tiandituMapOptions } from '@jeesite/vmap';
 import { createGeomanInstance } from '@geoman-io/maplibre-geoman-free';
 import type { Geoman } from '@geoman-io/maplibre-geoman-free';
+import { match } from 'ts-pattern';
 import '@geoman-io/maplibre-geoman-free/dist/maplibre-geoman.css';
 
 /**
@@ -93,15 +94,13 @@ export const GeoEditModal = defineComponent({
         return;
       }
       await gm.disableAllModes();
-      if (mode === 'marker' || mode === 'line' || mode === 'polygon' || mode === 'rectangle' || mode === 'circle') {
-        await gm.enableDraw(mode);
-      } else if (mode === 'edit') {
-        await gm.enableGlobalEditMode();
-      } else if (mode === 'drag') {
-        await gm.enableGlobalDragMode();
-      } else if (mode === 'remove') {
-        await gm.enableGlobalRemovalMode();
-      }
+      // 模式 → geoman API 分发（exhaustive：新增绘制/编辑模式漏接入时编译报错）
+      await match(mode)
+        .with('marker', 'line', 'polygon', 'rectangle', 'circle', (drawMode) => gm.enableDraw(drawMode))
+        .with('edit', () => gm.enableGlobalEditMode())
+        .with('drag', () => gm.enableGlobalDragMode())
+        .with('remove', () => gm.enableGlobalRemovalMode())
+        .exhaustive();
       activeMode.value = mode;
     }
 

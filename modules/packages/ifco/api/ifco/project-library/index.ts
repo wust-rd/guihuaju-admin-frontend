@@ -12,6 +12,8 @@
  * 其余 45 条按固定规则确定性生成凑满 50 条（刷新即恢复，无随机值）。
  */
 
+import { match } from 'ts-pattern';
+
 /** 库：统计卡点选 = 表格筛选维度，经路由 ?library= 持久化 */
 export type LibraryKey = 'planning' | 'reserve' | 'implementing' | 'exited';
 
@@ -225,7 +227,7 @@ export type ProjectLibraryItem = {
   /** 备注（可空） */
   remarks: string;
   library: LibraryKey;
-  status: string;
+  status: ProjectStatus;
   /** 入库时间（自动生成，恒只读显示） */
   inLibraryDate: string;
   /** 退出环节（仅已退出库项目有值：退出前所处的生命周期库） */
@@ -244,19 +246,21 @@ export type ProjectLibraryItem = {
   territorialSpacePlanFileList?: string[];
   /** 项目实施方案文件（审查文件页签；多文件不限量） */
   projectImplementationPlanFileList?: string[];
+  /** 是否涉及文物保护（审查文件页签 · 其他论证材料；是/否） */
+  involveCulturalRelicProtection?: string;
+  /** 是否涉及环境影响评价（审查文件页签 · 其他论证材料；是/否） */
+  involveEnvironmentalImpactAssessment?: string;
+  /** 其他论证材料附件（审查文件页签；多文件不限量） */
+  otherArgumentFileList?: string[];
   /** 地理数据（GeoJSON 字符串；上传 shp/dwg 经后端解析，或地图编辑产出） */
   locationGeoJson?: string;
   /** 地理数据源文件名（.shp/.dwg） */
   locationFileName?: string;
-  // ── 联合审查机构审查（行业主管部门=联合审查单位，对每个文件区块/地理数据出具） ──
-  /** 立项审批或核准备案文件 · 各机构审查（key=机构名） */
-  approvalOrFilingReviewMap?: ProjectReviewEntryMap;
-  /** 国土空间规划符合情况 · 各机构审查 */
-  territorialSpacePlanReviewMap?: ProjectReviewEntryMap;
-  /** 项目实施方案 · 各机构审查 */
-  projectImplementationPlanReviewMap?: ProjectReviewEntryMap;
-  /** 地理数据 · 各机构审查 */
-  geoDataReviewMap?: ProjectReviewEntryMap;
+  // ── 联合审查机构审查（第一次审查：机构→五区块结论+意见+附件） ──
+  /** 联合审查机构审查记录（key=机构名） */
+  jointReviewMap?: ProjectReviewEntryMap;
+  /** 责任部门（市住更局）审查（第一次审查） */
+  responsibilityReview?: ResponsibilityReviewEntry;
 };
 
 /** 是否选项（是/否） */
@@ -265,19 +269,65 @@ export const YES_NO_OPTIONS = [
   { label: '否', value: '否' },
 ];
 
-/** 联合审查结论（三选一） */
-export const REVIEW_RESULT_OPTIONS = ['符合', '不符合', '不涉及'];
+/** 联合审查结论（三选一；空串=未审查） */
+export type ReviewResult = '符合' | '不符合' | '不涉及';
 
-/** 单个机构对单个区块的审查（结论三选一 + 意见） */
+export const REVIEW_RESULT_OPTIONS: ReviewResult[] = ['符合', '不符合', '不涉及'];
+
+/** 审查材料区块 key（审查文件页签五项） */
+export type ReviewSectionKey =
+  | 'approvalOrFiling'
+  | 'territorialSpacePlan'
+  | 'projectImplementationPlan'
+  | 'otherArgument'
+  | 'geoData';
+
+/** 联合审查的评价区块（有序：联合审查 FormGroup 五行） */
+export const REVIEW_SECTIONS: { key: ReviewSectionKey; label: string }[] = [
+  { key: 'approvalOrFiling', label: '立项审批或核准备案文件' },
+  { key: 'territorialSpacePlan', label: '国土空间规划符合情况' },
+  { key: 'projectImplementationPlan', label: '项目实施方案' },
+  { key: 'otherArgument', label: '其他论证材料' },
+  { key: 'geoData', label: '地理数据' },
+];
+
+/** 单个机构对本项目的联合审查（第一次审查：五区块结论 + 意见 + 附件） */
 export type ProjectReviewEntry = {
-  /** 审查结论（符合/不符合/不涉及，空=未审查） */
-  result: string;
-  /** 审查意见 */
+  /** 各材料区块结论（空=未审查） */
+  results: Record<ReviewSectionKey, ReviewResult | ''>;
+  /** 审查意见（每机构一条） */
   opinion: string;
+  /** 审查附件（文件名清单，多文件不限量） */
+  fileList?: string[];
 };
 
-/** 一个区块的各机构审查（key=机构名） */
+/** 各机构审查记录（key=机构名） */
 export type ProjectReviewEntryMap = Record<string, ProjectReviewEntry>;
+
+/** 责任部门审查结论（通过审查/退回修改） */
+export type ResponsibilityConclusion = '通过审查' | '退回修改';
+
+export const RESPONSIBILITY_CONCLUSION_OPTIONS: ResponsibilityConclusion[] = ['通过审查', '退回修改'];
+
+/** 责任部门（市住更局）审查记录（第一次审查：五区块结论（仅符合/不符合）+ 审查结论 + 意见 + 附件） */
+export type ResponsibilityReviewEntry = {
+  /** 各材料区块结论（责任部门只评 符合/不符合，空=未审查） */
+  results: Record<ReviewSectionKey, ReviewResult | ''>;
+  /** 审查结论（通过审查/退回修改，空=未定） */
+  conclusion: ResponsibilityConclusion | '';
+  /** 审查意见 */
+  opinion: string;
+  /** 审查附件（文件名清单，多文件不限量） */
+  fileList?: string[];
+};
+
+/** 全空的材料区块结论（回填/兜底用；fromEntries 只能给宽索引签名，键来源 REVIEW_SECTIONS 完备，断言安全） */
+export function emptyReviewResults(): Record<ReviewSectionKey, ReviewResult | ''> {
+  return Object.fromEntries(REVIEW_SECTIONS.map(({ key }) => [key, ''])) as Record<
+    ReviewSectionKey,
+    ReviewResult | ''
+  >;
+}
 
 /** 地理数据示例（武汉两地块红线；假数据阶段模拟后端解析结果） */
 export const SAMPLE_LOCATION_GEO_JSON = JSON.stringify({
@@ -380,11 +430,23 @@ export const LIBRARY_CARDS: LibraryCard[] = [
   },
 ];
 
-/** 最新项目状态选项 */
-export const STATUS_OPTIONS = ['待提交', '待储备库审核', '待储备库回收', '已提交', '待重新预提交', '已退出'];
+/** 最新项目状态（流转状态机：策划库待提交→已提交转储备审核→…；已退出为终态只读） */
+export type ProjectStatus = '待提交' | '待储备库审核' | '待储备库回收' | '已提交' | '待重新预提交' | '已退出';
 
-/** 各状态可用操作（设计稿：操作列按钮随项目状态变化） */
-export const ACTIONS_BY_STATUS: Record<string, string[]> = {
+export const STATUS_OPTIONS: ProjectStatus[] = [
+  '待提交',
+  '待储备库审核',
+  '待储备库回收',
+  '已提交',
+  '待重新预提交',
+  '已退出',
+];
+
+/** 操作列动作（设计稿：操作列按钮随项目状态变化；流转类操作待接入） */
+export type ProjectAction = '查看' | '编辑' | '申请转储备' | '申请退出';
+
+/** 各状态可用操作（Record 按 ProjectStatus 穷尽：新增状态漏配操作时编译报错） */
+export const ACTIONS_BY_STATUS: Record<ProjectStatus, ProjectAction[]> = {
   待提交: ['查看', '编辑'],
   待储备库审核: ['查看'],
   待储备库回收: ['查看', '编辑'],
@@ -392,6 +454,18 @@ export const ACTIONS_BY_STATUS: Record<string, string[]> = {
   待重新预提交: ['查看', '编辑'],
   已退出: ['查看'],
 };
+
+/** 状态 → Tag 配色口径（列表状态列与表单标题 Tag 同源）：终态实心（已提交=蓝、已退出=灰），待办描边蓝 */
+export function statusTagProps(status: ProjectStatus): { color: string; variant: 'solid' | 'outlined' } {
+  return match(status)
+    .with('已提交', () => ({ color: 'blue', variant: 'solid' }) as const)
+    .with('已退出', () => ({ color: 'default', variant: 'solid' }) as const)
+    .with('待提交', '待储备库审核', '待储备库回收', '待重新预提交', () => ({
+      color: 'blue',
+      variant: 'outlined',
+    }) as const)
+    .exhaustive();
+}
 
 /** 设计稿抄录的前 5 行（项目编号 20263556~20263609，互为相邻号段） */
 const VERBATIM_ROWS: ProjectLibraryItem[] = [
@@ -548,7 +622,7 @@ const VERBATIM_ROWS: ProjectLibraryItem[] = [
 ];
 
 /** 库 → 生成行可轮转的状态 */
-const GEN_STATUSES: Record<LibraryKey, string[]> = {
+const GEN_STATUSES: Record<LibraryKey, ProjectStatus[]> = {
   planning: ['待提交', '待重新预提交'],
   reserve: ['待储备库审核', '待储备库回收'],
   implementing: ['已提交'],
@@ -674,30 +748,46 @@ export const PROJECTS: ProjectLibraryItem[] = [
       ...(i % 5 === 0 ? { territorialSpacePlanFileList: ['国土空间规划符合性核查意见.pdf'] } : {}),
       // 项目实施方案文件：i%4===1 的行预置一个
       ...(i % 4 === 1 ? { projectImplementationPlanFileList: ['项目实施方案（评审稿）.pdf'] } : {}),
+      // 其他论证材料：文物保护/环评是否（偶数行轮转），i%6===2 的行预置一个附件
+      involveCulturalRelicProtection: i % 2 === 0 ? (i % 4 === 0 ? '是' : '否') : undefined,
+      involveEnvironmentalImpactAssessment: i % 2 === 1 ? (i % 6 === 0 ? '是' : '否') : undefined,
+      ...(i % 6 === 2 ? { otherArgumentFileList: ['项目社会稳定风险评估报告.pdf'] } : {}),
       // 地理数据：i%3===1 的行预置示例红线
       ...(i % 3 === 1 ? { locationGeoJson: SAMPLE_LOCATION_GEO_JSON, locationFileName: '项目红线.shp' } : {}),
-      // 联合审查：按本项目已选行业主管部门逐机构出具（轮转覆盖四个区块，部分留未审查）
-      ...((): Record<string, ProjectReviewEntryMap | undefined> => {
+      // 联合审查（第一次审查）：按本项目已选行业主管部门逐机构出具（五区块结论轮转，部分留未审查）
+      ...((): { jointReviewMap?: ProjectReviewEntryMap; responsibilityReview?: ResponsibilityReviewEntry } => {
         function buildMap(pattern: boolean, seed: number): ProjectReviewEntryMap | undefined {
           if (!pattern) return undefined;
           return Object.fromEntries(
             industrySupervisionDeptList.map((org, k) => [
               org,
-              (i + seed + k) % 4 === 3
-                ? { result: '', opinion: '' }
-                : {
-                    result: pick(REVIEW_RESULT_OPTIONS, i + seed + k),
-                    opinion: (i + seed + k) % 2 === 0 ? '材料齐备，同意通过。' : '',
-                  },
+              {
+                // fromEntries 只能给宽索引签名，键来源 REVIEW_SECTIONS 完备，断言安全
+                results: Object.fromEntries(
+                  REVIEW_SECTIONS.map(({ key }, j) => [
+                    key,
+                    (i + seed + k + j) % 4 === 3 ? '' : pick(REVIEW_RESULT_OPTIONS, i + seed + k + j),
+                  ]),
+                ) as Record<ReviewSectionKey, ReviewResult | ''>,
+                opinion: (i + seed + k) % 2 === 0 ? '材料齐备，同意通过。' : '',
+                ...(i % 3 === 0 && k === 0 ? { fileList: ['联合审查意见（盖章扫描件）.pdf'] } : {}),
+              },
             ]),
           );
         }
-        return {
-          approvalOrFilingReviewMap: buildMap(i % 2 === 0, 0),
-          territorialSpacePlanReviewMap: buildMap(i % 3 === 0, 1),
-          projectImplementationPlanReviewMap: buildMap(i % 2 === 1, 2),
-          geoDataReviewMap: buildMap(i % 3 === 1, 3),
-        };
+        // 责任部门（市住更局）：五项仅评 符合/不符合，审查结论轮转
+        const responsibilityReview: ResponsibilityReviewEntry | undefined =
+          i % 2 === 1
+            ? {
+                results: Object.fromEntries(
+                  REVIEW_SECTIONS.map(({ key }, j) => [key, (i + j) % 4 === 3 ? '' : pick(['符合', '不符合'] as const, i + j)]),
+                ) as Record<ReviewSectionKey, ReviewResult | ''>,
+                conclusion: pick(['通过审查', '退回修改', ''] as const, i),
+                opinion: i % 3 === 0 ? '项目材料齐全，同意通过审查。' : '',
+                ...(i % 4 === 1 ? { fileList: ['责任部门审查意见（盖章）.pdf'] } : {}),
+              }
+            : undefined;
+        return { jointReviewMap: buildMap(i % 2 === 0, 0), responsibilityReview };
       })(),
     };
   }),

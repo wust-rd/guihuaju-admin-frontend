@@ -89,11 +89,7 @@
       <template #implementOrgList="{ record }">{{ withSlash(joinList(record.implementOrgList)) }}</template>
       <template #coordinateOrgList="{ record }">{{ withSlash(joinList(record.coordinateOrgList)) }}</template>
       <template #status="{ record }">
-        <Tag
-          :color="record.status === '已退出' ? 'default' : 'blue'"
-          :variant="SOLID_STATUSES.includes(record.status) ? 'solid' : 'outlined'"
-          style="border-radius: 10px"
-        >
+        <Tag v-bind="statusTagProps(record.status)" style="border-radius: 10px">
           {{ record.status }}
         </Tag>
       </template>
@@ -113,6 +109,7 @@
   import { Icon } from '@jeesite/core/components/Icon';
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
   import { buildYearItems } from '@jeesite/core/libs/year';
+  import { match } from 'ts-pattern';
   import {
     ACTIONS_BY_STATUS,
     DISTRICTS,
@@ -125,16 +122,16 @@
     RENEWAL_AREA_BATCH_LABEL,
     STATUS_OPTIONS,
     filterProjects,
+    statusTagProps,
     type LibraryKey,
+    type ProjectAction,
+    type ProjectStatus,
   } from '@jeesite/ifco/api/ifco/project-library';
   import ProjectForm from './form.vue';
 
   const { showMessage } = useMessage();
   const route = useRoute();
   const router = useRouter();
-
-  /** 终态用实心（已提交=实心蓝，已退出=实心灰），待办态用描边蓝 */
-  const SOLID_STATUSES = ['已提交', '已退出'];
 
   // ── 路由参数：library(四库点选) + district(行政区) ───────────────────
   /** 默认选中策划库（URL 无 ?library= 参数时同样按策划库过滤） */
@@ -194,9 +191,9 @@
   const actionColumn: BasicColumn = {
     width: 210,
     actions: (record: Recordable) =>
-      (ACTIONS_BY_STATUS[record.status] ?? ['查看']).map((label: string) => ({
-        label,
-        onClick: () => handleAction(label, record),
+      (ACTIONS_BY_STATUS[record.status as ProjectStatus] ?? ['查看']).map((action: ProjectAction) => ({
+        label: action,
+        onClick: () => handleAction(action, record),
       })),
   };
 
@@ -209,17 +206,14 @@
     openDrawer(true, record);
   }
 
-  /** 查看走只读表单；流转类操作（申请转储备/申请退出等）随后续接入 */
-  function handleAction(label: string, record: Recordable) {
-    if (label === '查看') {
-      handleForm({ ...record, isView: true });
-      return;
-    }
-    if (label === '编辑') {
-      handleForm({ ...record });
-      return;
-    }
-    handleTodo(label);
+  /** 查看走只读表单、编辑走可写表单；流转类操作（申请转储备/申请退出）随后续接入
+   *  （exhaustive：后续接入新操作漏分支时编译报错） */
+  function handleAction(action: ProjectAction, record: Recordable) {
+    match(action)
+      .with('查看', () => handleForm({ ...record, isView: true }))
+      .with('编辑', () => handleForm({ ...record }))
+      .with('申请转储备', '申请退出', () => handleTodo(action))
+      .exhaustive();
   }
 
   /** 表单保存回调（TODO: 后端接入后更新本地数据） */

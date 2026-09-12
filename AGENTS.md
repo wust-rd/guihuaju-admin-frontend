@@ -159,7 +159,7 @@
     .exhaustive(); // 不要用 otherwise 兜底——会吞掉漏分支，丧失编译期保护
   ```
 - **保持普通 if 的场景**：布尔/范围/大小等普通业务条件；热路径上仅 1~2 个 kind 早返回的检查（match 无收益）；分支种类不会扩展的一次性逻辑；
-- **已知坑**：match 回调返回元组会被 TypeScript 推宽（`[a, b]` → `number[]`），回调需标注显式返回类型，或返回处 `as [number, number]`；
+- **已知坑**：match 回调返回元组会被 TypeScript 推宽（`[a, b]` → `number[]`），回调需标注显式返回类型，或返回处 `as [number, number]`；返回对象字面量同理（`variant: 'solid'` 被推成 `string`），返回处加 `as const`；
 - 参照实现：`modules/packages/ifco/api/ifco/progress-fill/index.ts`（cellValue/tabTotal/grandTotal 穷尽匹配）、`modules/packages/ifco/views/ifco/shared/bring-in.ts`（resultMessage 按 mode 匹配）；布尔组合匹配参照 `packages/core/layouts/default/header/link-item.tsx`。
 
 ## 模板组件引用与 import 同步（硬性规则）

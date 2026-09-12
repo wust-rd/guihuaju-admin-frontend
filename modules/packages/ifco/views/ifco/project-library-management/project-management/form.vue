@@ -31,13 +31,7 @@
   <BasicDrawer v-bind="$attrs" force-render width="70%" @register="registerDrawer" @ok="handleSubmit">
     <template #title>
       <span>{{ getTitle }}</span>
-      <Tag
-        v-if="record.status"
-        :color="record.status === '已退出' ? 'default' : 'blue'"
-        :variant="SOLID_STATUSES.includes(record.status) ? 'solid' : 'outlined'"
-        style="border-radius: 10px"
-        class="ml-2"
-      >
+      <Tag v-if="record.status" v-bind="statusTagProps(record.status)" style="border-radius: 10px" class="ml-2">
         {{ record.status }}
       </Tag>
     </template>
@@ -91,8 +85,6 @@
               </div>
               <div v-if="!approvalOrFilingFileList.length" class="text-14px text-gray-400">未上传文件</div>
             </div>
-            <!-- 联合审查机构审查：机构切换（空间恒定） -->
-            <ReviewBlock v-model:entries="reviewMap.approvalOrFiling" :org-list="reviewOrgList" :disabled="isView" />
           </template>
           <!-- 国土空间规划符合情况：上传（多文件不限量，与立项审批同款交互） -->
           <template #territorialSpacePlanFileList>
@@ -117,12 +109,6 @@
               </div>
               <div v-if="!territorialSpacePlanFileList.length" class="text-14px text-gray-400">未上传文件</div>
             </div>
-            <!-- 联合审查机构审查：机构切换（空间恒定） -->
-            <ReviewBlock
-              v-model:entries="reviewMap.territorialSpacePlan"
-              :org-list="reviewOrgList"
-              :disabled="isView"
-            />
           </template>
           <!-- 项目实施方案：上传（多文件不限量，与前两区同款交互） -->
           <template #projectImplementationPlanFileList>
@@ -147,12 +133,30 @@
               </div>
               <div v-if="!projectImplementationPlanFileList.length" class="text-14px text-gray-400">未上传文件</div>
             </div>
-            <!-- 联合审查机构审查：机构切换（空间恒定） -->
-            <ReviewBlock
-              v-model:entries="reviewMap.projectImplementationPlan"
-              :org-list="reviewOrgList"
-              :disabled="isView"
-            />
+          </template>
+          <!-- 其他论证材料：文物保护/环评是否 + 上传附件（与立项审批同款交互） -->
+          <template #otherArgumentFileList>
+            <Upload
+              v-if="!isView"
+              v-model:file-list="otherArgumentFileList"
+              multiple
+              :before-upload="() => false"
+              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+            >
+              <Button preIcon="i-ant-design:upload-outlined" class="rounded-none"> 上传文件 </Button>
+            </Upload>
+            <!-- 查看态：只读文件清单 -->
+            <div v-else class="mt-8px flex flex-col gap-4px">
+              <div
+                v-for="file in otherArgumentFileList"
+                :key="file.uid"
+                class="flex items-center gap-6px text-14px text-gray-800"
+              >
+                <span class="i-ant-design:paper-clip-outlined text-14px text-gray-400"></span>
+                {{ file.name }}
+              </div>
+              <div v-if="!otherArgumentFileList.length" class="text-14px text-gray-400">未上传文件</div>
+            </div>
           </template>
           <!-- 地理数据：上传 shp/dwg 解析渲染 + geoman 地图编辑 -->
           <template #locationGeoJson>
@@ -161,8 +165,15 @@
               v-model:file-name="locationFileName"
               :disabled="isView"
             />
-            <!-- 联合审查机构审查：机构切换（空间恒定） -->
-            <ReviewBlock v-model:entries="reviewMap.geoData" :org-list="reviewOrgList" :disabled="isView" />
+          </template>
+          <!-- 联合审查机构审查（第一次审查）：行业主管部门（切换）+ 责任部门（市住更局） -->
+          <template #jointReview>
+            <ReviewBlock
+              v-model:entries="reviewMap"
+              v-model:responsibility="responsibilityReview"
+              :org-list="reviewOrgList"
+              :disabled="isView"
+            />
           </template>
         </BasicForm>
       </TabPane>
@@ -170,7 +181,7 @@
   </BasicDrawer>
 </template>
 <script lang="ts" setup name="ViewsIfcoProjectLibraryManagementProjectManagementForm">
-  import { computed, reactive, ref } from 'vue';
+  import { computed, ref } from 'vue';
   import { Input, TabPane, Tabs, Tag, Upload } from 'antdv-next';
   import { BasicForm, FormSchema, useForm } from '@jeesite/core/components/Form';
   import type { FormActionType } from '@jeesite/core/components/Form/src/types/form';
@@ -179,6 +190,7 @@
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
   import { Stepper } from '@jeesite/ui';
   import type { StepItem } from '@jeesite/ui';
+  import { match } from 'ts-pattern';
   import {
     CITY_RENEWAL_AREA_LIST,
     DISTRICTS,
@@ -196,11 +208,14 @@
     RESPONSIBLE_DEPT_LIST,
     COORDINATE_ORG_LIST,
     SIX_BRING_TYPE_OPTIONS,
+    emptyReviewResults,
+    statusTagProps,
     YES_NO_OPTIONS,
     type LibraryKey,
     type ProjectAffiliation,
     type ProjectLibraryItem,
     type ProjectReviewEntryMap,
+    type ResponsibilityReviewEntry,
   } from '@jeesite/ifco/api/ifco/project-library';
   import GeoDataSection from './geo-data-section';
   import ReviewBlock from './review-block';
@@ -210,9 +225,6 @@
 
   const isView = ref(false);
   const record = ref<ProjectLibraryItem & { isNewRecord?: boolean }>({} as ProjectLibraryItem);
-
-  /** 终态实心（已提交=蓝、已退出=灰），待办描边蓝——与列表状态列同口径 */
-  const SOLID_STATUSES = ['已提交', '已退出'];
 
   /** 编辑权限：项目转到储备库及之后，「不可修改」清单字段锁定（策划库内可编辑） */
   const identityLocked = ref(false);
@@ -234,23 +246,25 @@
   // ── 审查文件页签：项目实施方案文件（多文件不限量，仅记录文件名） ──
   const projectImplementationPlanFileList = ref<UploadFileItem[]>([]);
 
+  // ── 审查文件页签：其他论证材料附件（多文件不限量，仅记录文件名） ──
+  const otherArgumentFileList = ref<UploadFileItem[]>([]);
+
   // ── 审查文件页签：地理数据（GeoJSON + 源文件名） ──
   const locationGeoJson = ref('');
   const locationFileName = ref('');
 
-  // ── 审查文件页签：联合审查机构审查（四个区块 × 各机构；机构切换，空间恒定） ──
-  type ReviewSectionKey = 'approvalOrFiling' | 'territorialSpacePlan' | 'projectImplementationPlan' | 'geoData';
+  // ── 审查文件页签：联合审查机构审查（第一次审查，机构→五区块结论+意见+附件） ──
+  const reviewMap = ref<ProjectReviewEntryMap>({});
 
-  const reviewMap = reactive<Record<ReviewSectionKey, ProjectReviewEntryMap>>({
-    approvalOrFiling: {},
-    territorialSpacePlan: {},
-    projectImplementationPlan: {},
-    geoData: {},
+  // ── 审查文件页签：责任部门（市住更局）审查（第一次审查） ──
+  const responsibilityReview = ref<ResponsibilityReviewEntry>({
+    results: emptyReviewResults(),
+    conclusion: '',
+    opinion: '',
   });
 
-  /** 联合审查机构 = 本项目已选行业主管部门（未选时给全量选项占位） */
-  /** 联合审查机构：固定四家（不随项目勾选的行业主管部门变化；后端接入后换接口） */
-  const reviewOrgList = computed(() => [...INDUSTRY_SUPERVISION_DEPT_LIST]);
+  /** 联合审查机构（行业主管部门页签）：固定四家中去掉市住更局（后端接入后换接口） */
+  const reviewOrgList = computed(() => INDUSTRY_SUPERVISION_DEPT_LIST.filter((org) => org !== '市住更局'));
 
   const getTitle = computed(() => {
     if (isView.value) return `查看 · ${record.value.projectName ?? ''}`;
@@ -295,6 +309,23 @@
 
   function toOptions(list: readonly string[]) {
     return list.map((name) => ({ label: name, value: name }));
+  }
+
+  /** 片区名称三件套显隐：市级/区级片区内显示，片区外零星隐藏
+   *  （exhaustive：项目归属新增种类漏处理时编译报错） */
+  function showRenewalAreaFields(affiliation: ProjectAffiliation | ''): boolean {
+    return match(affiliation)
+      .with('city-area', 'district-area', () => true)
+      .with('scattered', '', () => false)
+      .exhaustive();
+  }
+
+  /** 片区名称下拉选项：市级=前期规划已入库片区，区级/零星=区级片区清单 */
+  function renewalAreaNameOptions(affiliation: ProjectAffiliation | ''): string[] {
+    return match(affiliation)
+      .with('city-area', () => CITY_RENEWAL_AREA_LIST.map((area) => area.name))
+      .with('district-area', 'scattered', '', () => DISTRICT_RENEWAL_AREA_LIST)
+      .exhaustive();
   }
 
   /** 市级更新片区内必填（否则不必填）的分情况校验 */
@@ -423,17 +454,12 @@
       field: 'renewalAreaName',
       component: 'Select' as const,
       componentProps: ({ formModel }) => ({
-        options: toOptions(
-          formModel.projectAffiliation === 'city-area'
-            ? CITY_RENEWAL_AREA_LIST.map((area) => area.name)
-            : DISTRICT_RENEWAL_AREA_LIST,
-        ),
+        options: toOptions(renewalAreaNameOptions(formModel.projectAffiliation ?? '')),
         allowClear: true,
         placeholder: '请选择片区',
         onChange: handleRenewalAreaChange,
       }),
-      ifShow: ({ values }) =>
-        values.projectAffiliation === 'city-area' || values.projectAffiliation === 'district-area',
+      ifShow: ({ values }) => showRenewalAreaFields(values.projectAffiliation ?? ''),
       rules: [requiredWhenCityArea('市级更新片区内项目必选片区名称')],
       dynamicDisabled: () => identityLocked.value,
     },
@@ -697,7 +723,34 @@
       colProps: { md: 24, lg: 24 },
     },
     {
-      label: '地理数据',
+      label: '其他论证材料',
+      field: 'otherArgumentGroup',
+      component: 'FormGroup',
+      colProps: { md: 24, lg: 24 },
+    },
+    {
+      label: '是否涉及文物保护',
+      field: 'involveCulturalRelicProtection',
+      component: 'Select' as const,
+      componentProps: { options: YES_NO_OPTIONS, allowClear: true, placeholder: '请选择' },
+      colProps: { md: 24, lg: 12 },
+    },
+    {
+      label: '是否涉及环境影响评价',
+      field: 'involveEnvironmentalImpactAssessment',
+      component: 'Select' as const,
+      componentProps: { options: YES_NO_OPTIONS, allowClear: true, placeholder: '请选择' },
+      colProps: { md: 24, lg: 12 },
+    },
+    {
+      label: '',
+      field: 'otherArgumentFileList',
+      component: 'Input',
+      slot: 'otherArgumentFileList',
+      colProps: { md: 24, lg: 24 },
+    },
+    {
+      label: '项目红线范围',
       field: 'geoDataGroup',
       component: 'FormGroup',
       colProps: { md: 24, lg: 24 },
@@ -707,6 +760,19 @@
       field: 'locationGeoJson',
       component: 'Input',
       slot: 'locationGeoJson',
+      colProps: { md: 24, lg: 24 },
+    },
+    {
+      label: '审查结果',
+      field: 'jointReviewGroup',
+      component: 'FormGroup',
+      colProps: { md: 24, lg: 24 },
+    },
+    {
+      label: '',
+      field: 'jointReview',
+      component: 'Input',
+      slot: 'jointReview',
       colProps: { md: 24, lg: 24 },
     },
   ];
@@ -721,11 +787,13 @@
   /** 审查表单是否已挂载（非激活页签懒挂载，首次切到页签才注册） */
   const reviewFormReady = ref(false);
 
-  /** 回填审查表单的两个下拉值 */
+  /** 回填审查表单的下拉值 */
   function applyReviewFormValues() {
     setReviewFieldsValue({
       complyTerritorialSpacePlan: record.value.complyTerritorialSpacePlan ?? '',
       involvePlanAdjustment: record.value.involvePlanAdjustment ?? '',
+      involveCulturalRelicProtection: record.value.involveCulturalRelicProtection ?? '',
+      involveEnvironmentalImpactAssessment: record.value.involveEnvironmentalImpactAssessment ?? '',
     });
   }
 
@@ -760,12 +828,19 @@
         name,
       }),
     );
+    otherArgumentFileList.value = (record.value.otherArgumentFileList ?? []).map((name, index) => ({
+      uid: `${index}-${name}`,
+      name,
+    }));
     locationGeoJson.value = record.value.locationGeoJson ?? '';
     locationFileName.value = record.value.locationFileName ?? '';
-    reviewMap.approvalOrFiling = { ...(record.value.approvalOrFilingReviewMap ?? {}) };
-    reviewMap.territorialSpacePlan = { ...(record.value.territorialSpacePlanReviewMap ?? {}) };
-    reviewMap.projectImplementationPlan = { ...(record.value.projectImplementationPlanReviewMap ?? {}) };
-    reviewMap.geoData = { ...(record.value.geoDataReviewMap ?? {}) };
+    reviewMap.value = { ...(record.value.jointReviewMap ?? {}) };
+    responsibilityReview.value = {
+      results: emptyReviewResults(),
+      conclusion: '',
+      opinion: '',
+      ...(record.value.responsibilityReview ?? {}),
+    };
     // 审查表单在非激活页签中懒挂载：此处不可 await 其方法（未注册会抛错卡死 loading），
     // 已挂载则直接回填，未挂载等注册回调时回填
     if (reviewFormReady.value) applyReviewFormValues();
