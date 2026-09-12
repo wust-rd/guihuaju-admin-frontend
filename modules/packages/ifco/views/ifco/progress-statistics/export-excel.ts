@@ -9,9 +9,10 @@
  * 「全武汉市」汇总（不带 unit 的聚合口径）作为第一个 sheet。
  * 数值纯数字输出（无千分位）；r3（其中：本年新开工）数值直出含 0；全表细边框。
  */
-import { utils, write } from 'xlsx-js-style';
-import type { CellObject, Range, WorkBook, WorkSheet } from 'xlsx-js-style';
+import { write } from 'xlsx-js-style';
+import type { Range, WorkBook, WorkSheet } from 'xlsx-js-style';
 import { saveAs } from 'file-saver';
+import { finishBorderedSheet, fixedPlusUniformCols } from '../shared/excel';
 import type { ProgressStatRow } from '@jeesite/ifco/api/ifco/progress-fill';
 import { DATA_CATEGORIES, LEAF_CATEGORIES, quarterLabel } from '@jeesite/ifco/api/ifco/progress-fill';
 
@@ -70,28 +71,11 @@ function buildStatSheet(rows: ProgressStatRow[]): WorkSheet {
     ...LEAF_CATEGORIES.map((leaf) => numberOut(row.key, row.categories[leaf.key])),
   ]);
 
-  const worksheet = utils.aoa_to_sheet([headerRow1, headerRow2, ...dataRows]);
-  worksheet['!merges'] = merges;
-  worksheet['!cols'] = Array.from({ length: lastCol + 1 }, (_, col) => {
-    if (col === 0) return { wch: 42 };
-    if (col === 1) return { wch: 10 };
-    if (col === 2) return { wch: 8 };
-    if (col === 3) return { wch: 14 };
-    return { wch: 12 };
-  });
-
-  // 全表细边框；未填的值在 AOA 中没有单元格对象，补空单元格让边框完整覆盖
-  const thin = { style: 'thin', color: { rgb: '000000' } };
-  const area = utils.decode_range(worksheet['!ref']!);
-  for (let row = area.s.r; row <= area.e.r; row += 1) {
-    for (let col = area.s.c; col <= area.e.c; col += 1) {
-      const address = utils.encode_cell({ r: row, c: col });
-      const cell = ((worksheet[address] as CellObject | undefined) ?? { t: 's', v: '' }) as CellObject;
-      cell.s = { ...(cell.s ?? {}), border: { top: thin, bottom: thin, left: thin, right: thin } };
-      worksheet[address] = cell;
-    }
-  }
-  return worksheet;
+  return finishBorderedSheet(
+    [headerRow1, headerRow2, ...dataRows],
+    merges,
+    fixedPlusUniformCols(lastCol, [42, 10, 8, 14], 12),
+  );
 }
 
 export async function exportProgressStatExcel({ year, quarter, unitName, sheets }: ExportParams): Promise<void> {

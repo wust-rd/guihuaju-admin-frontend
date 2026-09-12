@@ -8,8 +8,9 @@
  * 复用项目既有方案（同 progress-fill/export-excel.ts）；样式走 xlsx-js-style 分支：全表细边框。
  */
 import { utils, write } from 'xlsx-js-style';
-import type { CellObject, WorkBook, WorkSheet } from 'xlsx-js-style';
+import type { WorkBook, WorkSheet } from 'xlsx-js-style';
 import { saveAs } from 'file-saver';
+import { finishBorderedSheet } from '../shared/excel';
 import type { ProjectColumn } from '@jeesite/ifco/api/ifco/common';
 import { quarterLabel } from '@jeesite/ifco/api/ifco/common';
 import type { EffectUnitData } from '@jeesite/ifco/api/ifco/effect-fill';
@@ -54,23 +55,11 @@ export async function exportEffectExcel({ year, quarter, unitName, unitData }: E
     rows.push(row);
   }
 
-  const worksheet: WorkSheet = utils.aoa_to_sheet(rows);
-
-  // ── 列宽 ────────────────────────────────────────────────────────────
-  worksheet['!cols'] = [{ wch: 42 }, { wch: 10 }, { wch: 8 }, { wch: 14 }, ...projects.map(() => ({ wch: 12 }))];
-
-  // 全表细边框（xlsx 社区版不支持样式，导出走 xlsx-js-style 分支）
-  const thin = { style: 'thin', color: { rgb: '000000' } };
-  const area = utils.decode_range(worksheet['!ref']!);
-  for (let row = area.s.r; row <= area.e.r; row += 1) {
-    for (let col = area.s.c; col <= area.e.c; col += 1) {
-      const address = utils.encode_cell({ r: row, c: col });
-      // 未填的值在 AOA 中没有单元格对象，补空单元格让边框完整覆盖
-      const cell = ((worksheet[address] as CellObject | undefined) ?? { t: 's', v: '' }) as CellObject;
-      cell.s = { ...(cell.s ?? {}), border: { top: thin, bottom: thin, left: thin, right: thin } };
-      worksheet[address] = cell;
-    }
-  }
+  const worksheet: WorkSheet = finishBorderedSheet(
+    rows,
+    [],
+    [{ wch: 42 }, { wch: 10 }, { wch: 8 }, { wch: 14 }, ...projects.map(() => ({ wch: 12 }))],
+  );
 
   const workbook: WorkBook = {
     SheetNames: ['项目实施成效填报'],

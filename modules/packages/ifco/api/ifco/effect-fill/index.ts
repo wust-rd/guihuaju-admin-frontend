@@ -12,6 +12,7 @@
  */
 
 import { reactive } from 'vue';
+import { match } from 'ts-pattern';
 import { defHttp } from '@jeesite/core/utils/http/axios';
 import { useGlobSetting } from '@jeesite/core/hooks/setting';
 import type { ProjectColumn } from '../common';
@@ -383,12 +384,16 @@ export function cellValue(
   item: EffectIndicatorDef,
   column: ProjectColumn,
 ): number | string | [number, number] | undefined {
-  if (item.kind === 'section') return undefined;
-  const value = column.values[item.key];
-  if (item.dual) {
-    return Array.isArray(value) ? value : undefined;
-  }
-  return value === undefined || value === '' || Array.isArray(value) ? undefined : value;
+  return match(item.kind)
+    .with('section', () => undefined)
+    .with('fill', () => {
+      const value = column.values[item.key];
+      if (item.dual) {
+        return Array.isArray(value) ? value : undefined;
+      }
+      return value === undefined || value === '' || Array.isArray(value) ? undefined : value;
+    })
+    .exhaustive();
 }
 
 /** 一行指标的「合计」：双值行按位求和返回二元组；普通行 = 数值之和；节标题行无合计 */
@@ -396,23 +401,27 @@ export function rowTotal(
   item: EffectIndicatorDef,
   data: EffectUnitData | undefined,
 ): number | [number, number] | undefined {
-  if (item.kind === 'section') return undefined;
-  if (item.dual) {
-    let sumA = 0;
-    let sumB = 0;
-    for (const column of data?.projects ?? []) {
-      const value = cellValue(item, column);
-      if (Array.isArray(value)) {
-        sumA += value[0];
-        sumB += value[1];
+  return match(item.kind)
+    .with('section', () => undefined)
+    .with('fill', (): number | [number, number] | undefined => {
+      if (item.dual) {
+        let sumA = 0;
+        let sumB = 0;
+        for (const column of data?.projects ?? []) {
+          const value = cellValue(item, column);
+          if (Array.isArray(value)) {
+            sumA += value[0];
+            sumB += value[1];
+          }
+        }
+        return [sumA, sumB] as [number, number];
       }
-    }
-    return [sumA, sumB];
-  }
-  let sum = 0;
-  for (const column of data?.projects ?? []) {
-    const value = cellValue(item, column);
-    if (typeof value === 'number') sum += value;
-  }
-  return sum;
+      let sum = 0;
+      for (const column of data?.projects ?? []) {
+        const value = cellValue(item, column);
+        if (typeof value === 'number') sum += value;
+      }
+      return sum;
+    })
+    .exhaustive();
 }

@@ -54,7 +54,7 @@
   </PageWrapper>
 </template>
 <script lang="ts" setup name="ViewsIfcoProgressStatisticsList">
-  import { computed, onMounted, reactive, ref, watch } from 'vue';
+  import { computed, onMounted, reactive, ref } from 'vue';
   import { Card, RadioGroup, Select, Table } from 'antdv-next';
   import type { TableColumnsType } from 'antdv-next';
   import ResizableTitle from '@jeesite/core/components/Table/src/components/ResizableTitle.vue';

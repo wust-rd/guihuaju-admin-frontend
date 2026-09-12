@@ -16,8 +16,9 @@
  * 数值直出含 0；样式走 xlsx-js-style 分支：全表细边框。
  */
 import { utils, write } from 'xlsx-js-style';
-import type { CellObject, Range, WorkBook, WorkSheet } from 'xlsx-js-style';
+import type { Range, WorkBook, WorkSheet } from 'xlsx-js-style';
 import { saveAs } from 'file-saver';
+import { finishBorderedSheet, fixedPlusUniformCols } from '../shared/excel';
 import type { CategoryDef, IndicatorDef, PeriodFillData, ProjectColumn } from '@jeesite/ifco/api/ifco/progress-fill';
 import {
   DATA_CATEGORIES,
@@ -73,29 +74,6 @@ function indicatorRow(item: IndicatorDef, cells: (number | string | undefined)[]
   return [item.name, item.unit || undefined, item.code || undefined, ...cells];
 }
 
-function finishSheet(rows: (string | number | undefined)[][], merges: Range[], lastCol: number): WorkSheet {
-  const worksheet = utils.aoa_to_sheet(rows);
-  worksheet['!merges'] = merges;
-  worksheet['!cols'] = Array.from({ length: lastCol + 1 }, (_, col) => {
-    if (col === 0) return { wch: 42 };
-    if (col === 1) return { wch: 10 };
-    if (col === 2) return { wch: 8 };
-    return { wch: 12 };
-  });
-  // 全表细边框（xlsx 社区版不支持样式，导出走 xlsx-js-style 分支）
-  const thin = { style: 'thin', color: { rgb: '000000' } };
-  const area = utils.decode_range(worksheet['!ref']!);
-  for (let row = area.s.r; row <= area.e.r; row += 1) {
-    for (let col = area.s.c; col <= area.e.c; col += 1) {
-      const address = utils.encode_cell({ r: row, c: col });
-      // 未填的值在 AOA 中没有单元格对象，补空单元格让边框完整覆盖
-      const cell = ((worksheet[address] as CellObject | undefined) ?? { t: 's', v: '' }) as CellObject;
-      cell.s = { ...(cell.s ?? {}), border: { top: thin, bottom: thin, left: thin, right: thin } };
-      worksheet[address] = cell;
-    }
-  }
-  return worksheet;
-}
 
 /** 固定列（指标名称/计量单位/代码）的两行纵向合并 */
 const fixedColMerges: Range[] = [0, 1, 2].map((col) => ({ s: { r: 0, c: col }, e: { r: 1, c: col } }));
@@ -142,7 +120,7 @@ export async function exportProgressFillExcel({ year, quarter, unitName, periodD
       }
       rows.push(indicatorRow(item, cells));
     }
-    sheets.push({ name: '总览', worksheet: finishSheet(rows, merges, lastCol) });
+    sheets.push({ name: '总览', worksheet: finishBorderedSheet(rows, merges, fixedPlusUniformCols(lastCol, [42, 10, 8], 12)) });
   }
 
   // ── 每个一级类目一个 sheet ──────────────────────────────────────────
@@ -185,7 +163,7 @@ export async function exportProgressFillExcel({ year, quarter, unitName, periodD
       }
       rows.push(indicatorRow(item, cells));
     }
-    sheets.push({ name: category.label, worksheet: finishSheet(rows, merges, lastCol) });
+    sheets.push({ name: category.label, worksheet: finishBorderedSheet(rows, merges, fixedPlusUniformCols(lastCol, [42, 10, 8], 12)) });
   }
 
   const workbook: WorkBook = {
