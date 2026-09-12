@@ -8,12 +8,16 @@
      list.vue 在打开前经 setDrawerProps 设置（硬性规则，动画中翻转会首击不弹）。
 
   抽屉标题 = 查看/新增/编辑 · 项目名 + 当前项目状态 Tag（已退出=灰实心、
-  已提交=蓝实心、待办=蓝描边）。标题下方为三段生命周期步骤条（无标题；
-  @jeesite/ui 的 Stepper 兼页签：已退出整条无强调色，在库仅当前阶段蓝色强调），
-  步骤条下方为卡片式 Tabs（antdv-next，type=card，默认保活）：
-  「基本信息」= 全部表单；「审查文件」= 独立 BasicForm（FormGroup 分区
-  「立项审批或核准备案文件」+ 插槽：提示行 + antd Upload 多文件不限量，
-  before-upload 拦截仅记录文件名；查看态隐藏按钮与移除图标）。
+  已提交=蓝实心、待办=蓝描边）。已退出项目在步骤条上方以 bg-gray-100 灰条
+  只读展示 退出环节/退出时间/退出原因（不占表单分区）。
+  四步流转步骤条（@jeesite/ui 的 Stepper 兼页签：策划库入库→策划转储备→
+  储备转实施→已实施入库；已退出整条置灰；打开抽屉固定落步骤①）：
+  ① 策划库入库 = 基本信息表单；② 策划转储备 = 审查文件表单（六 FormGroup 分区：
+  立项审批或核准备案文件/国土空间规划符合情况/项目实施方案/其他论证材料/
+  项目红线范围/审查结果，插槽承载 Upload 与 ReviewBlock，核对清单=五材料分区）；③ 储备转实施 =
+  实施条件确认/规划调整情况/资金落实情况（impl 前缀字段组）+ 审查结果（核对清单=实施三分区）；
+  ④ 已实施入库 暂空白。
+  步骤切换内容进入方向滑动（v-show 不销毁表单，切换不丢填写中间态）。
 
   字段契约（api/ifco/project-library，2026-09-09 字段表）：
    - 分区：项目基本信息（入库时间在项目编号下方、备注在主要建设内容后）/ 投资与资金 /
@@ -36,12 +40,33 @@
       </Tag>
     </template>
 
-    <!-- 生命周期步骤条（无标题；兼页签，已退出整条无强调色，在库仅当前阶段蓝色强调） -->
+    <!-- 已退出项目：退出信息（步骤条上方灰底只读展示，不占表单分区） -->
+    <div
+      v-if="isExited"
+      class="mb-4 flex flex-wrap items-center gap-x-32px gap-y-4px bg-gray-100 rd-2 px-16px py-10px text-14px"
+    >
+      <span>
+        <span class="text-gray-500">退出环节：</span>
+        <span class="ml-4px text-gray-800">{{ exitedFromLabel || '/' }}</span>
+      </span>
+      <span>
+        <span class="text-gray-500">退出时间：</span>
+        <span class="ml-4px text-gray-800">{{ record.exitDate || '/' }}</span>
+      </span>
+      <span>
+        <span class="text-gray-500">退出原因：</span>
+        <span class="ml-4px text-gray-800">{{ record.exitReason || '/' }}</span>
+      </span>
+    </div>
+
+    <!-- 四步流转步骤条（兼页签：点击切换内容区；已退出整条置灰） -->
     <Stepper v-model:active="activeStage" :steps="stepItems" :tone="isExited ? 'gray' : 'blue'" class="mb-16px" />
 
-    <!-- 卡片式页签：基本信息（全部表单）/ 审查文件（待接入） -->
-    <Tabs type="card">
-      <TabPane key="basic" tab="基本信息">
+    <!-- 步骤内容（Stepper 兼页签，切换进入方向滑动）：
+         ① 策划库入库=基本信息表单；② 策划转储备=审查文件表单；③④ 暂空白。
+         v-show 不销毁表单（切换步骤不丢填写中间态） -->
+    <Transition :name="stageSlideName">
+      <div v-show="activeStage === 0">
         <BasicForm @register="registerForm">
           <!-- 系统自动生成字段：只读输入框 + 右侧小字提示 -->
           <template #projectCode="{ model, field }">
@@ -57,8 +82,10 @@
             </div>
           </template>
         </BasicForm>
-      </TabPane>
-      <TabPane key="review" tab="审查文件">
+      </div>
+    </Transition>
+    <Transition :name="stageSlideName">
+      <div v-show="activeStage === 1">
         <BasicForm @register="handleReviewFormRegister">
           <!-- 立项审批或核准备案文件：提示行 + 图标按钮上传（多文件不限量，before-upload 拦截，假数据阶段） -->
           <template #projectApprovalOrFilingFileList>
@@ -171,18 +198,94 @@
             <ReviewBlock
               v-model:entries="reviewMap"
               v-model:responsibility="responsibilityReview"
+              :sections="REVIEW_SECTIONS"
               :org-list="reviewOrgList"
               :disabled="isView"
             />
           </template>
         </BasicForm>
-      </TabPane>
-    </Tabs>
+      </div>
+    </Transition>
+    <!-- 步骤③：储备转实施（实施条件确认/规划调整情况/资金落实情况） -->
+    <Transition :name="stageSlideName">
+      <div v-show="activeStage === 2">
+        <BasicForm @register="handleImplFormRegister">
+          <!-- 规划调整附件：提示行 + 上传（与立项审批同款交互） -->
+          <template #implPlanAdjustmentFileList>
+            <div class="text-14px text-black mb-4">请上传经规委会审议的方案成果、评审结果、批复文件</div>
+            <Upload
+              v-if="!isView"
+              v-model:file-list="implPlanAdjustmentFileList"
+              class="mt-8px"
+              multiple
+              :before-upload="() => false"
+              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+            >
+              <Button preIcon="i-ant-design:upload-outlined" class="rounded-none"> 上传文件 </Button>
+            </Upload>
+            <!-- 查看态：只读文件清单 -->
+            <div v-else class="mt-8px flex flex-col gap-4px">
+              <div
+                v-for="file in implPlanAdjustmentFileList"
+                :key="file.uid"
+                class="flex items-center gap-6px text-14px text-gray-800"
+              >
+                <span class="i-ant-design:paper-clip-outlined text-14px text-gray-400"></span>
+                {{ file.name }}
+              </div>
+              <div v-if="!implPlanAdjustmentFileList.length" class="text-14px text-gray-400">未上传文件</div>
+            </div>
+          </template>
+          <!-- 资金落实附件：提示行 + 上传（与立项审批同款交互） -->
+          <template #implFundProofFileList>
+            <div class="text-14px text-black mb-4">
+              请上传资金来源证明、金融机构贷款意向函或财政资金安排文件等证明材料
+            </div>
+            <Upload
+              v-if="!isView"
+              v-model:file-list="implFundProofFileList"
+              class="mt-8px"
+              multiple
+              :before-upload="() => false"
+              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+            >
+              <Button preIcon="i-ant-design:upload-outlined" class="rounded-none"> 上传文件 </Button>
+            </Upload>
+            <!-- 查看态：只读文件清单 -->
+            <div v-else class="mt-8px flex flex-col gap-4px">
+              <div
+                v-for="file in implFundProofFileList"
+                :key="file.uid"
+                class="flex items-center gap-6px text-14px text-gray-800"
+              >
+                <span class="i-ant-design:paper-clip-outlined text-14px text-gray-400"></span>
+                {{ file.name }}
+              </div>
+              <div v-if="!implFundProofFileList.length" class="text-14px text-gray-400">未上传文件</div>
+            </div>
+          </template>
+          <!-- 审查结果（储备转实施）：行业主管部门（切换）+ 责任部门（市住更局），核对清单=本步骤三分区 -->
+          <template #implJointReview>
+            <ReviewBlock
+              v-model:entries="implReviewMap"
+              v-model:responsibility="implResponsibilityReview"
+              :sections="IMPL_REVIEW_SECTIONS"
+              :org-list="reviewOrgList"
+              :disabled="isView"
+            />
+          </template>
+        </BasicForm>
+      </div>
+    </Transition>
+    <!-- 步骤④：已实施入库（暂空白页） -->
+    <Transition :name="stageSlideName">
+      <div v-show="activeStage === 3"></div>
+    </Transition>
   </BasicDrawer>
 </template>
 <script lang="ts" setup name="ViewsIfcoProjectLibraryManagementProjectManagementForm">
-  import { computed, ref } from 'vue';
-  import { Input, TabPane, Tabs, Tag, Upload } from 'antdv-next';
+  import { computed, ref, watch } from 'vue';
+  import { Input, Tag, Upload } from 'antdv-next';
   import { BasicForm, FormSchema, useForm } from '@jeesite/core/components/Form';
   import type { FormActionType } from '@jeesite/core/components/Form/src/types/form';
   import { Button } from '@jeesite/core/components/Button';
@@ -207,10 +310,15 @@
     RENEWAL_AREA_BATCH_LABEL,
     RESPONSIBLE_DEPT_LIST,
     COORDINATE_ORG_LIST,
+    IMPL_REVIEW_SECTIONS,
+    REVIEW_SECTIONS,
     SIX_BRING_TYPE_OPTIONS,
+    emptyImplReviewResults,
     emptyReviewResults,
     statusTagProps,
     YES_NO_OPTIONS,
+    type ImplResponsibilityReviewEntry,
+    type ImplReviewEntryMap,
     type LibraryKey,
     type ProjectAffiliation,
     type ProjectLibraryItem,
@@ -253,12 +361,27 @@
   const locationGeoJson = ref('');
   const locationFileName = ref('');
 
+  // ── 储备转实施（步骤③）：规划调整附件（多文件不限量，仅记录文件名） ──
+  const implPlanAdjustmentFileList = ref<UploadFileItem[]>([]);
+
+  // ── 储备转实施（步骤③）：资金落实附件（多文件不限量，仅记录文件名） ──
+  const implFundProofFileList = ref<UploadFileItem[]>([]);
+
   // ── 审查文件页签：联合审查机构审查（第一次审查，机构→五区块结论+意见+附件） ──
   const reviewMap = ref<ProjectReviewEntryMap>({});
 
   // ── 审查文件页签：责任部门（市住更局）审查（第一次审查） ──
   const responsibilityReview = ref<ResponsibilityReviewEntry>({
     results: emptyReviewResults(),
+    conclusion: '',
+    opinion: '',
+  });
+
+  // ── 储备转实施（步骤③）：联合审查与责任部门审查 ──
+  const implReviewMap = ref<ImplReviewEntryMap>({});
+
+  const implResponsibilityReview = ref<ImplResponsibilityReviewEntry>({
+    results: emptyImplReviewResults(),
     conclusion: '',
     opinion: '',
   });
@@ -271,34 +394,45 @@
     return record.value.isNewRecord ? '新增项目' : `编辑 · ${record.value.projectName ?? ''}`;
   });
 
-  /** 已退出项目（退出信息分区的显隐与步骤条置灰依据） */
+  /** 已退出项目（退出信息灰条的显隐与步骤条置灰依据） */
   const isExited = computed(() => record.value.library === 'exited');
 
-  // ── 生命周期步骤条（兼页签） ────────────────────────────────────────
+  /** 退出环节中文名（退出信息灰条展示用） */
+  const exitedFromLabel = computed(() => (record.value.exitedFrom ? LIBRARY_LABELS[record.value.exitedFrom] : ''));
+
+  // ── 四步流转步骤条（兼页签） ────────────────────────────────────────
+  /** 四步流转标题（点击切换内容区：①基本信息 ②审查文件 ③④空白） */
+  const STAGE_TITLES = ['策划库入库', '策划转储备', '储备转实施', '已实施入库'];
+
+  /** 三段生命周期库（已退出项目按「退出环节」映射走过的步骤用） */
   const STAGE_ORDER: LibraryKey[] = ['planning', 'reserve', 'implementing'];
 
-  /** 当前所处的生命周期阶段（在库项目用；已退出/新增无当前阶段） */
-  const currentStageIndex = computed(() => STAGE_ORDER.indexOf(record.value.library));
-
-  /** 页签默认落点：已退出=退出时所处环节，在库=当前阶段，新增=策划库 */
+  /** 步骤页签指针：打开抽屉固定落在步骤①（策划库入库） */
   const activeStage = ref(0);
 
+  /** 步骤内容进入方向：切到右侧步骤=自右滑入（stage-left），反向 stage-right */
+  const stageSlideName = ref<'stage-left' | 'stage-right'>('stage-left');
+
+  watch(activeStage, (next, prev) => {
+    stageSlideName.value = next >= prev ? 'stage-left' : 'stage-right';
+  });
+
   const stepItems = computed<StepItem[]>(() => {
-    // 已退出：如实表达走过的阶段（退出前已完成=灰勾、其余灰数字），整条无强调色
+    // 已退出：如实表达走过的步骤（退出前所处库之前的=灰勾、其余灰数字），整条无强调色
     if (isExited.value) {
       const exitIndex = STAGE_ORDER.indexOf(record.value.exitedFrom ?? 'implementing');
-      return STAGE_ORDER.map((key, index) => ({
-        title: LIBRARY_LABELS[key],
+      return STAGE_TITLES.map((title, index) => ({
+        title,
         status: index < exitIndex ? ('finish' as const) : ('wait' as const),
       }));
     }
-    // 在库/新增：仅当前所处阶段为强调色，已走过的常规完成态，未到的灰色
-    return STAGE_ORDER.map((key, index) => ({
-      title: LIBRARY_LABELS[key],
+    // 在库/新增：当前查看的步骤为强调色，之前的常规完成态，之后的灰色
+    return STAGE_TITLES.map((title, index) => ({
+      title,
       status:
-        index === currentStageIndex.value
+        index === activeStage.value
           ? ('process' as const)
-          : index < currentStageIndex.value
+          : index < activeStage.value
             ? ('finish' as const)
             : ('wait' as const),
     }));
@@ -362,37 +496,6 @@
   }
 
   const inputFormSchemas: FormSchema[] = [
-    {
-      label: '退出信息',
-      field: 'exitInfo',
-      component: 'FormGroup',
-      colProps: { md: 24, lg: 24 },
-      ifShow: () => isExited.value,
-    },
-    {
-      label: '退出环节',
-      field: 'exitedFromLabel',
-      component: 'Input',
-      ifShow: () => isExited.value,
-      dynamicDisabled: () => true,
-    },
-    {
-      label: '退出时间',
-      field: 'exitDate',
-      component: 'DatePicker',
-      componentProps: { valueFormat: 'YYYY-MM-DD', style: 'width: 100%' },
-      ifShow: () => isExited.value,
-      dynamicDisabled: () => true,
-    },
-    {
-      label: '退出原因',
-      field: 'exitReason',
-      component: 'InputTextArea',
-      componentProps: { maxlength: 200, rows: 2 },
-      colProps: { md: 24, lg: 24 },
-      ifShow: () => isExited.value,
-      dynamicDisabled: () => true,
-    },
     // ── 项目基本信息 ──────────────────────────────────────────────────
     {
       label: '项目基本信息',
@@ -804,6 +907,127 @@
     applyReviewFormValues();
   }
 
+  // ── 储备转实施（步骤③）表单 ────────────────────────────────────────
+  /** 储备转实施表单（FormGroup 分区：实施条件确认/规划调整情况/资金落实情况） */
+  const implFormSchemas: FormSchema[] = [
+    {
+      label: '实施条件确认',
+      field: 'implConditionGroup',
+      component: 'FormGroup',
+      colProps: { md: 24, lg: 24 },
+    },
+    {
+      label: '是否具备实施条件',
+      field: 'implConditionReady',
+      component: 'Select' as const,
+      componentProps: { options: YES_NO_OPTIONS, allowClear: true, placeholder: '请选择' },
+      colProps: { md: 24, lg: 12 },
+    },
+    {
+      label: '本年度计划完成投资(亿元)',
+      field: 'implYearPlanInvest',
+      component: 'InputNumber',
+      componentProps: { precision: 2, min: 0, style: 'width: 100%', placeholder: '请输入本年度计划完成投资' },
+      colProps: { md: 24, lg: 12 },
+    },
+    {
+      label: '计划开完工时间',
+      field: 'implPlanDuration',
+      component: 'RangePicker',
+      componentProps: { valueFormat: 'YYYY-MM-DD', style: 'width: 100%' },
+      colProps: { md: 24, lg: 24 },
+    },
+    {
+      label: '规划调整情况',
+      field: 'implPlanAdjustGroup',
+      component: 'FormGroup',
+      colProps: { md: 24, lg: 24 },
+    },
+    {
+      label: '是否涉及规划调整',
+      field: 'implInvolvePlanAdjustment',
+      component: 'Select' as const,
+      componentProps: { options: YES_NO_OPTIONS, allowClear: true, placeholder: '请选择' },
+      colProps: { md: 24, lg: 12 },
+    },
+    {
+      label: '是否通过规委会审议',
+      field: 'implPassedCommitteeReview',
+      component: 'Select' as const,
+      componentProps: { options: YES_NO_OPTIONS, allowClear: true, placeholder: '请选择' },
+      colProps: { md: 24, lg: 12 },
+    },
+    {
+      label: '',
+      field: 'implPlanAdjustmentFileList',
+      component: 'Input',
+      slot: 'implPlanAdjustmentFileList',
+      colProps: { md: 24, lg: 24 },
+    },
+    {
+      label: '资金落实情况',
+      field: 'implFundGroup',
+      component: 'FormGroup',
+      colProps: { md: 24, lg: 24 },
+    },
+    {
+      label: '是否已落实资金渠道',
+      field: 'implFundChannelSettled',
+      component: 'Select' as const,
+      componentProps: { options: YES_NO_OPTIONS, allowClear: true, placeholder: '请选择' },
+      colProps: { md: 24, lg: 12 },
+    },
+    {
+      label: '',
+      field: 'implFundProofFileList',
+      component: 'Input',
+      slot: 'implFundProofFileList',
+      colProps: { md: 24, lg: 24 },
+    },
+    {
+      label: '审查结果',
+      field: 'implJointReviewGroup',
+      component: 'FormGroup',
+      colProps: { md: 24, lg: 24 },
+    },
+    {
+      label: '',
+      field: 'implJointReview',
+      component: 'Input',
+      slot: 'implJointReview',
+      colProps: { md: 24, lg: 24 },
+    },
+  ];
+
+  const [registerImplForm, { setFieldsValue: setImplFieldsValue, setProps: setImplProps }] = useForm({
+    labelWidth: 180,
+    schemas: implFormSchemas,
+    baseColProps: { md: 24, lg: 12 },
+    showActionButtonGroup: false,
+  });
+
+  /** 储备转实施表单是否已挂载（v-show 面板常驻，注册时序与审查表单同款处理） */
+  const implFormReady = ref(false);
+
+  /** 回填储备转实施表单值 */
+  function applyImplFormValues() {
+    setImplFieldsValue({
+      implConditionReady: record.value.implConditionReady ?? '',
+      implYearPlanInvest: record.value.implYearPlanInvest,
+      implPlanDuration: record.value.implPlanDuration ?? [],
+      implInvolvePlanAdjustment: record.value.implInvolvePlanAdjustment ?? '',
+      implPassedCommitteeReview: record.value.implPassedCommitteeReview ?? '',
+      implFundChannelSettled: record.value.implFundChannelSettled ?? '',
+    });
+  }
+
+  /** 储备转实施表单注册回调：注册即回填当前记录值 */
+  function handleImplFormRegister(instance: FormActionType, uuid: string) {
+    registerImplForm(instance, uuid);
+    implFormReady.value = true;
+    applyImplFormValues();
+  }
+
   const [registerDrawer, { setDrawerProps, closeDrawer }] = useDrawerInner(async (data: any) => {
     setDrawerProps({ loading: true });
     await resetFields();
@@ -834,6 +1058,14 @@
     }));
     locationGeoJson.value = record.value.locationGeoJson ?? '';
     locationFileName.value = record.value.locationFileName ?? '';
+    implPlanAdjustmentFileList.value = (record.value.implPlanAdjustmentFileList ?? []).map((name, index) => ({
+      uid: `${index}-${name}`,
+      name,
+    }));
+    implFundProofFileList.value = (record.value.implFundProofFileList ?? []).map((name, index) => ({
+      uid: `${index}-${name}`,
+      name,
+    }));
     reviewMap.value = { ...(record.value.jointReviewMap ?? {}) };
     responsibilityReview.value = {
       results: emptyReviewResults(),
@@ -841,16 +1073,20 @@
       opinion: '',
       ...(record.value.responsibilityReview ?? {}),
     };
-    // 审查表单在非激活页签中懒挂载：此处不可 await 其方法（未注册会抛错卡死 loading），
+    implReviewMap.value = { ...(record.value.implJointReviewMap ?? {}) };
+    implResponsibilityReview.value = {
+      results: emptyImplReviewResults(),
+      conclusion: '',
+      opinion: '',
+      ...(record.value.implResponsibilityReview ?? {}),
+    };
+    // 审查表单/储备转实施表单在非激活步骤面板中：此处不可 await 其方法（未注册会抛错卡死 loading），
     // 已挂载则直接回填，未挂载等注册回调时回填
     if (reviewFormReady.value) applyReviewFormValues();
-    activeStage.value = isExited.value
-      ? STAGE_ORDER.indexOf(record.value.exitedFrom ?? 'implementing')
-      : Math.max(0, currentStageIndex.value);
+    if (implFormReady.value) applyImplFormValues();
+    // 步骤页签固定落步骤①（策划库入库）；退出信息在步骤条上方灰条展示，不走表单
+    activeStage.value = 0;
     await setFieldsValue({
-      exitedFromLabel: record.value.exitedFrom ? LIBRARY_LABELS[record.value.exitedFrom] : '',
-      exitDate: record.value.exitDate ?? '',
-      exitReason: record.value.exitReason ?? '',
       projectCode: record.value.projectCode ?? '',
       projectName: record.value.projectName ?? '',
       projectApprovalCode: record.value.projectApprovalCode ?? '',
@@ -880,6 +1116,7 @@
     });
     // 查看模式只禁用表单（抽屉体内安全）；抽屉级 showFooter 已由 list.vue 打开前设置
     await setProps({ disabled: isView.value });
+    setImplProps({ disabled: isView.value });
     setDrawerProps({ loading: false });
   });
 
@@ -902,3 +1139,23 @@
     emit('success', data);
   }
 </script>
+<style>
+  /* 四步内容切换（Stepper 兼页签）：v-show 瞬时切走旧面板，新面板方向性滑入。
+     只写 enter 类（无 leave 动画）——两块 BasicForm 常驻不销毁，避免滑动期间双表单并存跳动 */
+  .stage-left-enter-active,
+  .stage-right-enter-active {
+    transition:
+      transform 0.24s ease,
+      opacity 0.24s ease;
+  }
+
+  .stage-left-enter-from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+
+  .stage-right-enter-from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+</style>

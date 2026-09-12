@@ -256,11 +256,32 @@ export type ProjectLibraryItem = {
   locationGeoJson?: string;
   /** 地理数据源文件名（.shp/.dwg） */
   locationFileName?: string;
+  // ── 储备转实施（步骤③「储备转实施」页面，impl 前缀组） ──
+  /** 是否具备实施条件（是/否） */
+  implConditionReady?: string;
+  /** 本年度计划完成投资（亿元） */
+  implYearPlanInvest?: number;
+  /** 计划开完工时间范围 [计划开工, 计划完工]（YYYY-MM-DD） */
+  implPlanDuration?: string[];
+  /** 是否涉及规划调整（是/否；与审查文件的 involvePlanAdjustment 相互独立） */
+  implInvolvePlanAdjustment?: string;
+  /** 是否通过规委会审议（是/否） */
+  implPassedCommitteeReview?: string;
+  /** 规划调整附件（经规委会审议的方案成果、评审结果、批复文件） */
+  implPlanAdjustmentFileList?: string[];
+  /** 是否已落实资金渠道（是/否） */
+  implFundChannelSettled?: string;
+  /** 资金落实附件（资金来源证明、金融机构贷款意向函或财政资金安排文件等） */
+  implFundProofFileList?: string[];
   // ── 联合审查机构审查（第一次审查：机构→五区块结论+意见+附件） ──
   /** 联合审查机构审查记录（key=机构名） */
   jointReviewMap?: ProjectReviewEntryMap;
   /** 责任部门（市住更局）审查（第一次审查） */
   responsibilityReview?: ResponsibilityReviewEntry;
+  /** 联合审查机构审查记录 · 储备转实施（步骤③，key=机构名） */
+  implJointReviewMap?: ImplReviewEntryMap;
+  /** 责任部门（市住更局）审查 · 储备转实施（步骤③） */
+  implResponsibilityReview?: ImplResponsibilityReviewEntry;
 };
 
 /** 是否选项（是/否） */
@@ -282,13 +303,13 @@ export type ReviewSectionKey =
   | 'otherArgument'
   | 'geoData';
 
-/** 联合审查的评价区块（有序：联合审查 FormGroup 五行） */
+/** 联合审查的评价区块（有序：联合审查 FormGroup 五行；label 与「策划转储备」步骤的 FormGroup 分区标题一一对应） */
 export const REVIEW_SECTIONS: { key: ReviewSectionKey; label: string }[] = [
   { key: 'approvalOrFiling', label: '立项审批或核准备案文件' },
   { key: 'territorialSpacePlan', label: '国土空间规划符合情况' },
   { key: 'projectImplementationPlan', label: '项目实施方案' },
   { key: 'otherArgument', label: '其他论证材料' },
-  { key: 'geoData', label: '地理数据' },
+  { key: 'geoData', label: '项目红线范围' },
 ];
 
 /** 单个机构对本项目的联合审查（第一次审查：五区块结论 + 意见 + 附件） */
@@ -320,6 +341,42 @@ export type ResponsibilityReviewEntry = {
   /** 审查附件（文件名清单，多文件不限量） */
   fileList?: string[];
 };
+
+/** 储备转实施审查区块 key（步骤③，与 impl 表单 FormGroup 分区一一对应） */
+export type ImplSectionKey = 'implCondition' | 'implPlanAdjust' | 'implFund';
+
+/** 储备转实施审查区块（有序；label 与步骤③ FormGroup 分区标题一一对应） */
+export const IMPL_REVIEW_SECTIONS: { key: ImplSectionKey; label: string }[] = [
+  { key: 'implCondition', label: '实施条件确认' },
+  { key: 'implPlanAdjust', label: '规划调整情况' },
+  { key: 'implFund', label: '资金落实情况' },
+];
+
+/** 单个机构对储备转实施的审查（五区块结论 + 意见 + 附件） */
+export type ImplReviewEntry = {
+  results: Record<ImplSectionKey, ReviewResult | ''>;
+  opinion: string;
+  fileList?: string[];
+};
+
+/** 各机构储备转实施审查记录（key=机构名） */
+export type ImplReviewEntryMap = Record<string, ImplReviewEntry>;
+
+/** 责任部门（市住更局）储备转实施审查记录 */
+export type ImplResponsibilityReviewEntry = {
+  results: Record<ImplSectionKey, ReviewResult | ''>;
+  conclusion: ResponsibilityConclusion | '';
+  opinion: string;
+  fileList?: string[];
+};
+
+/** 全空的储备转实施区块结论（fromEntries 只能给宽索引签名，键来源 IMPL_REVIEW_SECTIONS 完备，断言安全） */
+export function emptyImplReviewResults(): Record<ImplSectionKey, ReviewResult | ''> {
+  return Object.fromEntries(IMPL_REVIEW_SECTIONS.map(({ key }) => [key, ''])) as Record<
+    ImplSectionKey,
+    ReviewResult | ''
+  >;
+}
 
 /** 全空的材料区块结论（回填/兜底用；fromEntries 只能给宽索引签名，键来源 REVIEW_SECTIONS 完备，断言安全） */
 export function emptyReviewResults(): Record<ReviewSectionKey, ReviewResult | ''> {
@@ -754,6 +811,61 @@ export const PROJECTS: ProjectLibraryItem[] = [
       ...(i % 6 === 2 ? { otherArgumentFileList: ['项目社会稳定风险评估报告.pdf'] } : {}),
       // 地理数据：i%3===1 的行预置示例红线
       ...(i % 3 === 1 ? { locationGeoJson: SAMPLE_LOCATION_GEO_JSON, locationFileName: '项目红线.shp' } : {}),
+      // 储备转实施（步骤③）：实施库的行预填
+      ...(library === 'implementing'
+        ? {
+            implConditionReady: '是',
+            implYearPlanInvest: Number((((i * 13) % 500) / 100 + 0.5).toFixed(2)),
+            implPlanDuration: ['2026-06-01', '2027-12-31'],
+            implInvolvePlanAdjustment: i % 2 === 0 ? '否' : '是',
+            implPassedCommitteeReview: i % 2 === 0 ? '是' : '否',
+            ...(i % 2 === 1
+              ? { implPlanAdjustmentFileList: ['规划调整方案（规委会审议稿）.pdf', '规委会评审结果.pdf'] }
+              : {}),
+            implFundChannelSettled: i % 3 === 0 ? '否' : '是',
+            ...(i % 3 !== 0 ? { implFundProofFileList: ['财政资金安排文件.pdf'] } : {}),
+          }
+        : {}),
+      // 联合审查 · 储备转实施（步骤③）：实施库的行按联审机构逐家出具
+      ...((): { implJointReviewMap?: ImplReviewEntryMap; implResponsibilityReview?: ImplResponsibilityReviewEntry } => {
+        if (library !== 'implementing') return {};
+        function buildImplMap(pattern: boolean, seed: number): ImplReviewEntryMap | undefined {
+          if (!pattern) return undefined;
+          return Object.fromEntries(
+            industrySupervisionDeptList
+              .filter((org) => org !== '市住更局')
+              .map((org, k) => [
+                org,
+                {
+                  // fromEntries 只能给宽索引签名，键来源 IMPL_REVIEW_SECTIONS 完备，断言安全
+                  results: Object.fromEntries(
+                    IMPL_REVIEW_SECTIONS.map(({ key }, j) => [
+                      key,
+                      (seed + k + j) % 4 === 3 ? '' : pick(REVIEW_RESULT_OPTIONS, seed + k + j),
+                    ]),
+                  ) as Record<ImplSectionKey, ReviewResult | ''>,
+                  opinion: (seed + k) % 2 === 0 ? '实施条件具备，同意转入实施。' : '',
+                },
+              ]),
+          );
+        }
+        return {
+          implJointReviewMap: buildImplMap(i % 2 === 0, i),
+          implResponsibilityReview:
+            i % 2 === 1
+              ? {
+                  results: Object.fromEntries(
+                    IMPL_REVIEW_SECTIONS.map(({ key }, j) => [
+                      key,
+                      (i + j) % 4 === 3 ? '' : pick(['符合', '不符合'] as const, i + j),
+                    ]),
+                  ) as Record<ImplSectionKey, ReviewResult | ''>,
+                  conclusion: pick(['通过审查', '退回修改', ''] as const, i),
+                  opinion: i % 3 === 0 ? '同意转入实施库。' : '',
+                }
+              : undefined,
+        };
+      })(),
       // 联合审查（第一次审查）：按本项目已选行业主管部门逐机构出具（五区块结论轮转，部分留未审查）
       ...((): { jointReviewMap?: ProjectReviewEntryMap; responsibilityReview?: ResponsibilityReviewEntry } => {
         function buildMap(pattern: boolean, seed: number): ProjectReviewEntryMap | undefined {

@@ -3,42 +3,44 @@ import { defineComponent, Transition } from 'vue';
 import type { PropType } from 'vue';
 import { Radio, RadioGroup, Select, TextArea, Upload } from 'antdv-next';
 import { Button } from '@jeesite/core/components/Button';
-import type {
-  ProjectReviewEntry,
-  ProjectReviewEntryMap,
-  ResponsibilityConclusion,
-  ResponsibilityReviewEntry,
-  ReviewResult,
-  ReviewSectionKey,
-} from '@jeesite/ifco/api/ifco/project-library';
-import {
-  RESPONSIBILITY_CONCLUSION_OPTIONS,
-  REVIEW_RESULT_OPTIONS,
-  REVIEW_SECTIONS,
-  emptyReviewResults,
-} from '@jeesite/ifco/api/ifco/project-library';
+import type { ResponsibilityConclusion, ReviewResult } from '@jeesite/ifco/api/ifco/project-library';
+import { RESPONSIBILITY_CONCLUSION_OPTIONS, REVIEW_RESULT_OPTIONS } from '@jeesite/ifco/api/ifco/project-library';
 import './review-block.css';
 
+/** 宽松审查记录（渲染用；具体键集由各步骤的 sections 清单约定——
+ *  步骤②材料五键 ProjectReviewEntry / 步骤③实施三键 ImplReviewEntry，结构双向兼容） */
+type LooseReviewEntry = {
+  results: Record<string, ReviewResult | ''>;
+  opinion: string;
+  fileList?: string[];
+};
+
+type LooseResponsibilityEntry = LooseReviewEntry & { conclusion: ResponsibilityConclusion | '' };
+
 /**
- * ifco —— 在库项目管理 · 联合审查机构审查（审查文件页签末尾 FormGroup「联合审查机构审查」内容）
+ * ifco —— 在库项目管理 · 审查结果区块（步骤②「策划转储备」/步骤③「储备转实施」末尾 FormGroup 通用）
  *
  * 标题「第一次审查」；下分两个审查主体（标题与切换按钮同行，外包浅灰圆角小容器
  * bg-gray-100 py-2 px-4 rd-2）：
  * - 行业主管部门（RadioGroup 按钮组多机构切换）：内容整体 ml-64px，机构切换时左滑/右滑动画——
- *   「审查要点核对」纯文字小节标题下五项材料结论（普通 radio：符合/不符合/不涉及，再缩进 ml-60px）
- *   +「审查意见」（ml-16px，每机构一条）+「审查附件」（Upload 多文件不限量 / 查看态只读清单）；
- * - 责任部门（市住更局）：「审查要点核对」五项仅 符合/不符合（无 不涉及）
+ *   「审查要点核对」纯文字小节标题下按 sections 清单逐项结论（普通 radio：符合/不符合/不涉及，
+ *   再缩进 ml-60px）+「审查意见」（ml-16px，每机构一条）
+ *   +「审查附件」（Upload 多文件不限量 / 查看态只读清单）；
+ * - 责任部门（市住更局）：各项仅 符合/不符合（无 不涉及）
  *   +「审查结论」select（通过审查/退回修改，位于审查意见上方）
  *   +「审查意见」+「审查附件」。
+ * sections 的 label 与所属步骤的 FormGroup 分区标题一一对应（步骤②=五材料分区、步骤③=实施三分区）。
  * 文字统一 14px。查看态内容只读、机构可切换查看。
  */
 export const ReviewBlock = defineComponent({
   name: 'IfcoProjectLibraryReviewBlock',
   props: {
+    /** 审查要点核对清单（键集与 entries/responsibility 的 results 约定一致） */
+    sections: { type: Array as PropType<{ key: string; label: string }[]>, required: true },
     /** 各机构审查记录（key=机构名） */
-    entries: { type: Object as PropType<ProjectReviewEntryMap>, required: true },
+    entries: { type: Object as PropType<Record<string, LooseReviewEntry>>, required: true },
     /** 责任部门（市住更局）审查记录 */
-    responsibility: { type: Object as PropType<ResponsibilityReviewEntry>, required: true },
+    responsibility: { type: Object as PropType<LooseResponsibilityEntry>, required: true },
     /** 机构清单 */
     orgList: { type: Array as PropType<string[]>, required: true },
     /** 查看态：结论/意见只读（机构仍可切换查看） */
@@ -65,32 +67,36 @@ export const ReviewBlock = defineComponent({
     });
 
     const resultOptions = REVIEW_RESULT_OPTIONS.map((label) => ({ label, value: label }));
-    /** 责任部门五项只评 符合/不符合（无 不涉及） */
+    /** 责任部门各项只评 符合/不符合（无 不涉及） */
     const resultOptionsNoExempt = REVIEW_RESULT_OPTIONS.filter((label) => label !== '不涉及').map((label) => ({
       label,
       value: label,
     }));
     const conclusionOptions = RESPONSIBILITY_CONCLUSION_OPTIONS.map((label) => ({ label, value: label }));
 
-    const activeEntry = (): ProjectReviewEntry =>
-      props.entries[activeOrg.value] ?? { results: emptyReviewResults(), opinion: '' };
+    function emptyResults(): Record<string, ReviewResult | ''> {
+      return Object.fromEntries(props.sections.map(({ key }) => [key, '']));
+    }
 
-    function patchEntry(patch: Partial<ProjectReviewEntry>) {
+    const activeEntry = (): LooseReviewEntry =>
+      props.entries[activeOrg.value] ?? { results: emptyResults(), opinion: '' };
+
+    function patchEntry(patch: Partial<LooseReviewEntry>) {
       emit('update:entries', {
         ...props.entries,
         [activeOrg.value]: { ...activeEntry(), ...patch },
       });
     }
 
-    function patchResult(section: ReviewSectionKey, result: ReviewResult | '') {
+    function patchResult(section: string, result: ReviewResult | '') {
       patchEntry({ results: { ...activeEntry().results, [section]: result } });
     }
 
-    function patchResponsibility(patch: Partial<ResponsibilityReviewEntry>) {
+    function patchResponsibility(patch: Partial<LooseResponsibilityEntry>) {
       emit('update:responsibility', { ...props.responsibility, ...patch });
     }
 
-    function patchResponsibilityResult(section: ReviewSectionKey, result: ReviewResult | '') {
+    function patchResponsibilityResult(section: string, result: ReviewResult | '') {
       patchResponsibility({ results: { ...props.responsibility.results, [section]: result } });
     }
 
@@ -136,7 +142,7 @@ export const ReviewBlock = defineComponent({
       <div class="ml-64px">
         {sectionTitle('审查要点核对')}
         <div class="ml-60px flex flex-col gap-8px py-8px">
-          {REVIEW_SECTIONS.map(({ key, label }) => (
+          {props.sections.map(({ key, label }) => (
             <div class="flex items-center gap-16px">
               <span class="w-160px shrink-0 text-14px text-gray-600">{label}</span>
               <RadioGroup
@@ -168,7 +174,7 @@ export const ReviewBlock = defineComponent({
       <div class="ml-64px">
         {sectionTitle('审查要点核对')}
         <div class="ml-60px flex flex-col gap-8px py-8px">
-          {REVIEW_SECTIONS.map(({ key, label }) => (
+          {props.sections.map(({ key, label }) => (
             <div class="flex items-center gap-16px">
               <span class="w-160px shrink-0 text-14px text-gray-600">{label}</span>
               <RadioGroup
