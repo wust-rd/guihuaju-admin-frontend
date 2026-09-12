@@ -138,64 +138,32 @@
   </PageWrapper>
 </template>
 <script lang="ts" setup name="ViewsIfcoProgressFillList">
-  import { computed, h, nextTick, onMounted, reactive, ref, watch } from 'vue';
-  import { Card, Input, InputNumber, Modal, Popconfirm, RadioGroup, Select, Switch, Table, Tooltip } from 'antdv-next';
-  import type { TableColumnsType } from 'antdv-next';
+  import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
+  import { Card, Input, InputNumber, Modal, RadioGroup, Select, Table } from 'antdv-next';
   import { useMessage } from '@jeesite/core/hooks/web/useMessage';
-  import { Icon } from '@jeesite/core/components/Icon';
   import { PageWrapper } from '@jeesite/core/components/Page';
   import { dateUtil } from '@jeesite/core/utils/dateUtil';
   import { buildYearItems } from '@jeesite/core/libs/year';
-  import type { CategoryDef, IndicatorDef, PeriodFillData, ProjectColumn } from '@jeesite/ifco/api/ifco/progress-fill';
+  import type { PeriodFillData, ProjectColumn } from '@jeesite/ifco/api/ifco/progress-fill';
   import {
     CATEGORY_MAP,
     CATEGORIES,
-    DATA_CATEGORIES,
     INDICATORS,
-    INDICATOR_MAP,
-    LEAF_CATEGORIES,
     QUARTER_OPTIONS,
     UNITS,
     bringInPrevPeriod,
-    cellValue,
-    deleteProgressProject,
     ensureProgressDicts,
-    grandTotal,
     loadProgressFillData,
     quarterLabel,
-    saveProgressProject,
-    saveProgressTotal,
-    tabTotal,
   } from '@jeesite/ifco/api/ifco/progress-fill';
-  import ResizableTitle from '@jeesite/core/components/Table/src/components/ResizableTitle.vue';
   import { exportProgressFillExcel } from './export-excel';
-  import { handleCellNav } from '../shared/cell-nav';
-  import { createAutoPersist } from '../shared/dirty-persist';
   import { createBringInController } from '../shared/bring-in';
-
-  /** 表格行(指标) */
-  type FillRow = {
-    key: string;
-    kind: IndicatorDef['kind'];
-    name: string;
-    unit: string;
-    code: string;
-  };
+  import type { FillRow } from './cell-renderers';
+  import { createFillEditing } from './fill-editing';
+  import { createCellRenderers } from './cell-renderers';
+  import { createTableColumns } from './table-columns';
 
   const { showMessage } = useMessage();
-
-  // ── 列宽拖拽(复用框架 ResizableTitle,同 sys/empUser):onHeaderCell 注入 resizable 与宽度回写 ──
-  const TABLE_COMPONENTS = { header: { cell: ResizableTitle } };
-  const colWidths = reactive<Record<string, number>>({});
-  const resizableHeaderCell = (col: any): any => ({
-    column: { ...col, resizable: true },
-    onResize: (_event: MouseEvent, { size }: { size: { width: number } }) => {
-      if (col.key) {
-        colWidths[col.key] = size.width;
-      }
-    },
-  });
-  const widthFor = (key: string, defaultWidth: number) => colWidths[key] ?? defaultWidth;
 
   // ── 填报周期:年份 + 季度(默认当前) ──────────────────────────────────
   const yearOptions = (buildYearItems(3) as { key: string; label: string }[]).map((item) => ({
@@ -266,80 +234,50 @@
     await loadFill();
   });
 
-  // ── 编辑态:同时仅一列;脏列跟踪(跨类目收集,顶部「保存」统一落库) ──────
-  const editingColKey = ref<string>();
-  const saving = ref(false);
-  let addSeq = 0;
-  /** 脏列登记:colKey → 所在叶子类目(保存时按 leafKey 提交) */
-  const dirtyCols = new Map<string, { leafKey: string; col: ProjectColumn }>();
+  // ── 编辑状态机 / 渲染函数 / 表格列(各自模块,共用同一份列宽登记) ──────
+  const colWidths = reactive<Record<string, number>>({});
+  const editing = createFillEditing({
+    year,
+    quarter,
+    reportUnit,
+    unitEditable,
+    activeLeaf,
+    periodData,
+    reload: loadFill,
+    colWidths,
+    showMessage,
+  });
+  const renderers = createCellRenderers({ quarter, isOverview, unitEditable, editing });
+  const table = createTableColumns({
+    activeLeaf,
+    isOverview,
+    periodData,
+    editingColKey: editing.editingColKey,
+    colWidths,
+    renderers,
+  });
 
-  function resetEditState() {
-    editingColKey.value = undefined;
-  }
-
-  /** 筛选条件变化:未保存修改先确认再丢弃,确认后整包重载 */
-  function handleFilterChange() {
-    if (dirtyCols.size) {
-      Modal.confirm({
-        title: '有未保存的修改',
-        content: `当前有 ${dirtyCols.size} 个项目列的修改尚未保存，切换年份/季度/单位后将丢弃。确定切换吗？`,
-        okText: '丢弃并切换',
-        cancelText: '继续编辑',
-        onOk: () => {
-          resetEditState();
-          dirtyCols.clear();
-          loadFill();
-        },
-      });
-      return;
-    }
-    resetEditState();
-    dirtyCols.clear();
-    loadFill();
-  }
+  const {
+    saving,
+    dirtyCols,
+    resetEditState,
+    handleFilterChange,
+    autoPersistDirty,
+    handleSave,
+    totalModalOpen,
+    totalInput,
+    handleTotalConfirm,
+    totalModalTitle,
+  } = editing;
+  const TABLE_COMPONENTS = table.TABLE_COMPONENTS;
+  const tableColumns = table.tableColumns;
+  const scrollX = table.scrollX;
 
   // 切换类目:先把未保存的脏列自动落库,再退出编辑态(填一列保存一列)
   watch([activeCategory, activeSub], async () => {
     await autoPersistDirty();
     resetEditState();
   });
-
-  /** 单列落库:值全量同步语义;新列(无 id)保存后用返回的 projectId 回填 */
-  async function persistColumn(leafKey: string, col: ProjectColumn) {
-    const values: Record<string, number | string> = {};
-    for (const item of INDICATORS) {
-      if (item.kind !== 'fill' && item.kind !== 'text') continue;
-      const value = col.values[item.key];
-      if (value !== undefined && value !== '' && !Array.isArray(value)) values[item.key] = value;
-    }
-    const isNew = !col.id;
-    const res = await saveProgressProject({
-      year: year.value,
-      quarter: quarter.value,
-      unit: reportUnit.value!,
-      leafKey,
-      project: { id: isNew ? undefined : col.id, name: col.name, values },
-    });
-    if (isNew) {
-      const tempKey = col.key;
-      col.id = res.projectId;
-      col.key = res.projectId;
-      if (editingColKey.value === tempKey) editingColKey.value = res.projectId;
-      if (colWidths[tempKey] !== undefined) {
-        colWidths[res.projectId] = colWidths[tempKey]!;
-        delete colWidths[tempKey];
-      }
-      dirtyCols.delete(tempKey);
-    }
-    dirtyCols.delete(col.key);
-  }
-
-  /** 切换前自动落库(共用工厂):把当前全部脏列(可跨类目)依次保存;失败列保留在登记中并提示 */
-  const autoPersistDirty = createAutoPersist(
-    dirtyCols,
-    ({ leafKey, col }) => persistColumn(leafKey, col),
-    showMessage,
-  );
 
   // ── 新增项目:居中 Modal 命名,确认后追加最右列并滚动到位 ──────────────
   const addModalOpen = ref(false);
@@ -366,13 +304,12 @@
     // 新列进入编辑前,先把之前未保存的脏列自动落库
     await autoPersistDirty();
     const tab = periodData.value[leaf.key] ?? (periodData.value[leaf.key] = { projects: [], totals: {} });
-    addSeq += 1;
-    const col = reactive<ProjectColumn>({ key: `add-${addSeq}`, name, imported: false, values: {} });
+    const col = reactive<ProjectColumn>({ key: `add-${Date.now()}`, name, imported: false, values: {} });
     tab.projects.push(col);
     dirtyCols.set(col.key, { leafKey: leaf.key, col });
     addModalOpen.value = false;
     // 新增即填报:直接进入该列编辑,并把表格滚到最右露出新列
-    editingColKey.value = col.key;
+    editing.editingColKey.value = col.key;
     nextTick(() => {
       const scroller = tableWrapRef.value?.querySelector('.ant-table-content, .ant-table-body');
       if (scroller) {
@@ -381,228 +318,7 @@
     });
   }
 
-  // ── 合计级录入行(total,如新增就业岗位):指标名旁「编辑」弹 Modal 直接录合计值 ──
-  const totalModalOpen = ref(false);
-  const totalEditKey = ref<string>();
-  const totalInput = ref<number>();
-
-  function openTotalModal(indicatorKey: string) {
-    if (!unitEditable.value) {
-      showMessage('当前单位为只读查看，不可填报');
-      return;
-    }
-    const leaf = activeLeaf.value;
-    if (!leaf) return;
-    totalEditKey.value = indicatorKey;
-    totalInput.value = periodData.value?.[leaf.key]?.totals?.[indicatorKey];
-    totalModalOpen.value = true;
-  }
-
-  async function handleTotalConfirm() {
-    const leaf = activeLeaf.value;
-    const key = totalEditKey.value;
-    if (!leaf || !key || !reportUnit.value) return;
-    const tab = periodData.value?.[leaf.key];
-    if (!tab) return;
-    if (!tab.totals) tab.totals = {};
-    const value = totalInput.value ?? null;
-    try {
-      await saveProgressTotal({
-        year: year.value,
-        quarter: quarter.value,
-        unit: reportUnit.value,
-        leafKey: leaf.key,
-        indicatorKey: key,
-        value,
-      });
-      if (value === null) delete tab.totals[key];
-      else tab.totals[key] = value;
-      totalModalOpen.value = false;
-    } catch (e: unknown) {
-      showMessage(e instanceof Error ? e.message : '保存合计值失败');
-    }
-  }
-
-  /** 合计录入 Modal 的标题与字段名(去缩进) */
-  const totalModalTitle = computed(() => {
-    const item = totalEditKey.value ? INDICATOR_MAP[totalEditKey.value] : undefined;
-    const name = (item?.name ?? '').trim();
-    return name ? `${name}（合计）` : '填写合计值';
-  });
-
-  // ── 表格行(指标清单,字典加载后填充) ──────────────────────────────────
-  const FILL_ROWS = computed<FillRow[]>(() =>
-    INDICATORS.map((item) => ({
-      key: item.key,
-      kind: item.kind,
-      name: item.name,
-      unit: item.unit,
-      code: item.code,
-    })),
-  );
-
-  /** 自动行(汇总/项目数)整行浅灰加粗只读 */
-  const sumRowOnCell = (record: FillRow) => ({
-    className: record.kind === 'sum' || record.kind === 'count' ? 'progress-fill-row-sum' : undefined,
-  });
-
-  /** 未填内容与 0 一律置空(不补斜杠、不补 0) */
-  function renderDisplay(value: number | string | undefined) {
-    if (value === undefined || value === '' || value === 0) return '';
-    return typeof value === 'number' ? String(value) : value;
-  }
-
-  function setCellValue(col: ProjectColumn, indicatorKey: string, value: number | string | undefined, leafKey: string) {
-    if (value === undefined || value === '') {
-      delete col.values[indicatorKey];
-    } else {
-      col.values[indicatorKey] = value;
-    }
-    dirtyCols.set(col.key, { leafKey, col });
-  }
-
-  // ── 单元格键盘导航:Enter/↓ = 下一个可填单元格,↑ = 上一个 ──────────────
-  // 仅编辑列纵向跳(其它列没有输入框),自动跳过汇总/项目数等只读行;
-
-  /** 其中：本年新开工（r3，编码 102）：开关型指标，0=非新开工、1=是新开工；
-   *  合计 = 各项目列该字段的总计（即为"是新开工"的项目个数） */
-  const NEW_START_KEY = 'r3';
-
-  /** r3 显示口径：数值直出（含 0），不走通用"未填与 0 置空" */
-  function renderNewStart(value: number | string | [number, number] | undefined) {
-    return String(Number(value ?? 0));
-  }
-
-  /** 单元格:编辑列内渲染输入控件(自动行除外),其余为只读文本 */
-  function renderFillCell(item: IndicatorDef, col: ProjectColumn, leafKey: string) {
-    if (editingColKey.value === col.key && (item.kind === 'fill' || item.kind === 'text')) {
-      if (item.key === NEW_START_KEY) {
-        // 新开工:开关录入(0/1),不参与键盘导航(无可键入的输入框,Enter/方向键会跳过本行)
-        return h('div', { class: 'flex w-full justify-center' }, [
-          h(Switch, {
-            size: 'default',
-            checked: Number(col.values[item.key] ?? 0) === 1,
-            checkedChildren: '是新开工',
-            unCheckedChildren: '非新开工',
-            'onUpdate:checked': (checked) => setCellValue(col, item.key, checked === true ? 1 : 0, leafKey),
-          }),
-        ]);
-      }
-      if (item.kind === 'text') {
-        return h('div', { class: 'w-full', onKeydownCapture: handleCellNav }, [
-          h(Input, {
-            size: 'small',
-            value: String(col.values[item.key] ?? ''),
-            placeholder: '请输入来源说明',
-            'onUpdate:value': (value: string) => setCellValue(col, item.key, value, leafKey),
-          }),
-        ]);
-      }
-      const value = col.values[item.key];
-      return h('div', { class: 'w-full', onKeydownCapture: handleCellNav }, [
-        h(InputNumber, {
-          size: 'small',
-          class: 'w-full',
-          value: typeof value === 'number' ? value : undefined,
-          min: 0,
-          controls: false,
-          placeholder: '请输入',
-          'onUpdate:value': (value2: number | string | null) =>
-            setCellValue(col, item.key, value2 ?? undefined, leafKey),
-        }),
-      ]);
-    }
-    if (item.key === NEW_START_KEY) {
-      // 新开工读态:显示数值(0/1),未填默认 0
-      return renderNewStart(col.values[item.key]);
-    }
-    return renderDisplay(cellValue(item, col));
-  }
-
-  /** 项目列头:「名称 + 编辑/删除图标」;编辑态下的编辑按钮换成保存 icon(点击即存该列);只读单位不渲染图标 */
-  function renderProjectHeader(col: ProjectColumn, leafKey: string) {
-    const editing = editingColKey.value === col.key;
-    const deletable = !(col.imported && quarter.value !== '1');
-    return h('div', { class: 'flex items-center justify-between gap-1' }, [
-      h('span', { class: 'flex-1 truncate text-left', title: col.name }, col.name),
-      unitEditable.value
-        ? h('span', { class: 'flex shrink-0 items-center gap-1' }, [
-            h(Tooltip, { title: editing ? '完成并保存本列' : '编辑本列' }, () =>
-              h(Icon, {
-                icon: editing ? 'ant-design:save-outlined' : 'ant-design:edit-outlined',
-                class: 'progress-fill-icon-edit',
-                onClick: () => toggleEdit(col, leafKey),
-              }),
-            ),
-            deletable
-              ? h(
-                  Popconfirm,
-                  { title: `确定删除项目「${col.name}」吗？`, onConfirm: () => handleDeleteColumn(col) },
-                  () =>
-                    h(Icon, {
-                      icon: 'ant-design:delete-outlined',
-                      class: 'progress-fill-icon',
-                    }),
-                )
-              : null,
-          ])
-        : null,
-    ]);
-  }
-
-  /** 进入/退出编辑:退出时该列若有改动立即落库(只读单位不允许进入编辑) */
-  async function toggleEdit(col: ProjectColumn, leafKey: string) {
-    if (editingColKey.value === col.key) {
-      // 完成编辑:先退出编辑态,脏列落库
-      editingColKey.value = undefined;
-      if (dirtyCols.has(col.key)) {
-        saving.value = true;
-        try {
-          await persistColumn(leafKey, col);
-        } catch (e: unknown) {
-          showMessage(e instanceof Error ? e.message : '保存失败');
-        } finally {
-          saving.value = false;
-        }
-      }
-      return;
-    }
-    if (!unitEditable.value) {
-      showMessage('当前单位为只读查看，不可填报');
-      return;
-    }
-    // 进入新列编辑前,先把之前未保存的脏列自动落库(填一列保存一列)
-    await autoPersistDirty();
-    editingColKey.value = col.key;
-  }
-
-  async function handleDeleteColumn(col: ProjectColumn) {
-    const leaf = activeLeaf.value;
-    if (!leaf || !periodData.value) return;
-    const tab = periodData.value[leaf.key];
-    if (!tab) return;
-    const withId = col;
-    if (withId.id) {
-      try {
-        await deleteProgressProject(withId.id);
-      } catch (e: unknown) {
-        showMessage(e instanceof Error ? e.message : '删除失败');
-        return;
-      }
-    }
-    tab.projects = tab.projects.filter((item) => item.key !== col.key);
-    dirtyCols.delete(col.key);
-    if (editingColKey.value === col.key) editingColKey.value = undefined;
-  }
-
   // ── 带入上一季度(服务端复制全部叶子类目;普通模式每周期×单位限一次) ────
-  const bringInTooltip = computed(() =>
-    quarter.value === '1'
-      ? '带入上一年第四季度填报的项目列（含数值，带入列可删除）'
-      : '带入本年度上一季度填报的项目列（含数值，带入列不可删除）',
-  );
-
-  // 带入弹窗(共用工厂):普通/仅名称/强制三模式,先自动落库脏列再执行
   const { bringModalOpen, bringing, handleBringIn, doBringIn, handleForceBringIn } =
     createBringInController({
       reportUnit,
@@ -618,34 +334,6 @@
       quarterLabel,
       showMessage,
     });
-
-  /** 顶部保存:把全部脏列(可跨类目)依次落库 */
-  async function handleSave() {
-    const dirtyCount = dirtyCols.size;
-    if (!dirtyCount) {
-      resetEditState();
-      showMessage(`暂无修改，${year.value} 年${quarterLabel(quarter.value)}项目进展填报数据已是最新`);
-      return;
-    }
-    saving.value = true;
-    let failed = 0;
-    let firstError = '';
-    for (const [, { leafKey, col }] of [...dirtyCols]) {
-      try {
-        await persistColumn(leafKey, col);
-      } catch (e: unknown) {
-        failed += 1;
-        firstError ||= e instanceof Error ? e.message : '保存失败';
-      }
-    }
-    saving.value = false;
-    resetEditState();
-    if (failed > 0) {
-      showMessage(`有 ${failed} 列保存失败：${firstError}`);
-    } else {
-      showMessage(`已保存 ${year.value} 年${quarterLabel(quarter.value)}项目进展填报（共 ${dirtyCount} 个项目列）`);
-    }
-  }
 
   // ── 导出 ────────────────────────────────────────────────────────────
   const exporting = ref(false);
@@ -666,7 +354,17 @@
     }
   }
 
-  // ── 表格列 ──────────────────────────────────────────────────────────
+  // ── 表格行与卡片标题 ────────────────────────────────────────────────
+  const FILL_ROWS = computed<FillRow[]>(() =>
+    INDICATORS.map((item) => ({
+      key: item.key,
+      kind: item.kind,
+      name: item.name,
+      unit: item.unit,
+      code: item.code,
+    })),
+  );
+
   const tableCardTitle = computed(() => {
     const period = `${year.value}年 ${quarterLabel(quarter.value)}`;
     const unitName = UNITS.find((unit) => unit.code === reportUnit.value)?.name;
@@ -675,155 +373,10 @@
       : `${period} · ${activeLeaf.value?.label}`;
   });
 
-  /** 指标名称单元格:合计级录入行(total)在非总览下带蓝色「编辑」按钮,弹 Modal 直接录合计值(只读单位不渲染) */
-  function renderNameCell(value: string, record: FillRow) {
-    if (isOverview.value || record.kind !== 'total' || !unitEditable.value) return value;
-    return h('div', { class: 'flex items-center justify-between gap-1' }, [
-      h('span', { class: 'flex-1 truncate' }, value),
-      h(Tooltip, { title: '填写合计值（各项目单元格不填值）' }, () =>
-        h(Icon, {
-          icon: 'ant-design:edit-outlined',
-          class: 'progress-fill-icon-edit',
-          onClick: () => openTotalModal(record.key),
-        }),
-      ),
-    ]);
-  }
-
-  function leadingColumns(): TableColumnsType<FillRow> {
-    return [
-      {
-        key: 'name',
-        title: '指标名称',
-        dataIndex: 'name',
-        width: widthFor('name', 400),
-        fixed: 'left',
-        className: 'progress-fill-col-name',
-        onHeaderCell: resizableHeaderCell,
-        render: (value: string, record: FillRow) => renderNameCell(value, record),
-      },
-      {
-        key: 'unit',
-        title: '计量单位',
-        dataIndex: 'unit',
-        width: widthFor('unit', 90),
-        align: 'center',
-        onHeaderCell: resizableHeaderCell,
-      },
-      {
-        key: 'code',
-        title: '代码',
-        dataIndex: 'code',
-        width: widthFor('code', 80),
-        align: 'center',
-        onHeaderCell: resizableHeaderCell,
-      },
-    ];
-  }
-
-  function buildFillColumns(): TableColumnsType<FillRow> {
-    const leaf = activeLeaf.value;
-    if (!leaf) return [];
-    const tab = periodData.value?.[leaf.key];
-    const projects = tab?.projects ?? [];
-    const projectColumns: TableColumnsType<FillRow> = projects.map((col, index) => ({
-      key: col.key,
-      title: renderProjectHeader(col, leaf.key),
-      width: widthFor(col.key, 140),
-      align: 'right',
-      onHeaderCell: resizableHeaderCell,
-      // 奇偶列底色提升横向辨识度;编辑列高亮仍优先生效
-      className:
-        [
-          index % 2 === 1 ? 'progress-fill-col-alt' : undefined,
-          editingColKey.value === col.key ? 'progress-fill-col-editing' : undefined,
-        ]
-          .filter(Boolean)
-          .join(' ') || undefined,
-      onCell: sumRowOnCell,
-      render: (_value: unknown, record: FillRow) => renderFillCell(INDICATOR_MAP[record.key], col, leaf.key),
-    }));
-    // 表头不做类目分组跨列,直接平铺项目列(类目已由 RadioGroup 表达)
-    return [
-      ...leadingColumns(),
-      {
-        key: 'total',
-        title: '合计',
-        width: widthFor('total', 120),
-        align: 'right',
-        onHeaderCell: resizableHeaderCell,
-        onCell: sumRowOnCell,
-        render: (_value: unknown, record: FillRow) =>
-          record.key === NEW_START_KEY
-            ? renderNewStart(tabTotal(INDICATOR_MAP[record.key], tab))
-            : renderDisplay(tabTotal(INDICATOR_MAP[record.key], tab)),
-      },
-      ...projectColumns,
-    ];
-  }
-
-  function buildOverviewColumns(): TableColumnsType<FillRow> {
-    const data = periodData.value;
-    /** 二级(叶子)类目列:值 = 该叶子类目的合计(total 行即录入值,count 行即列数) */
-    const leafColumn = (leaf: CategoryDef): TableColumnsType<FillRow>[number] => ({
-      key: leaf.key,
-      title: leaf.label,
-      width: widthFor(leaf.key, 150),
-      align: 'right',
-      onHeaderCell: resizableHeaderCell,
-      onCell: sumRowOnCell,
-      render: (_value: unknown, record: FillRow) =>
-        record.key === NEW_START_KEY
-          ? renderNewStart(tabTotal(INDICATOR_MAP[record.key], data?.[leaf.key]))
-          : renderDisplay(tabTotal(INDICATOR_MAP[record.key], data?.[leaf.key])),
-    });
-    /** 嵌套类目拆为三个二级子列(一级表头跨列),简单类目单列 */
-    const categoryColumns: TableColumnsType<FillRow> = DATA_CATEGORIES.map((cat) =>
-      cat.children?.length
-        ? {
-            key: cat.key,
-            title: cat.label,
-            children: cat.children.map((leaf) => leafColumn(leaf)),
-          }
-        : leafColumn(cat),
-    );
-    return [
-      ...leadingColumns(),
-      {
-        key: 'grand',
-        title: '总计',
-        width: widthFor('grand', 130),
-        align: 'right',
-        onHeaderCell: resizableHeaderCell,
-        onCell: sumRowOnCell,
-        render: (_value: unknown, record: FillRow) =>
-          record.key === NEW_START_KEY
-            ? renderNewStart(grandTotal(INDICATOR_MAP[record.key], data))
-            : renderDisplay(grandTotal(INDICATOR_MAP[record.key], data)),
-      },
-      ...categoryColumns,
-    ];
-  }
-
-  const tableColumns = computed<TableColumnsType<FillRow>>(() =>
-    isOverview.value ? buildOverviewColumns() : buildFillColumns(),
-  );
-
   /** 表格区域高度:视口自适应,表格内部纵向滚动(不依赖页面滚动,表头恒在视野) */
   const TABLE_HEIGHT = 'calc(100vh - 500px)';
-
-  // 横向滚动宽度 = 各列当前宽度(含拖拽调整)之和
-  const scrollX = computed(() => {
-    const fixedWidth = widthFor('name', 400) + widthFor('unit', 90) + widthFor('code', 80);
-    if (isOverview.value) {
-      return (
-        fixedWidth + widthFor('grand', 130) + LEAF_CATEGORIES.reduce((sum, leaf) => sum + widthFor(leaf.key, 150), 0)
-      );
-    }
-    const projects = activeLeaf.value ? (periodData.value?.[activeLeaf.value.key]?.projects ?? []) : [];
-    return fixedWidth + widthFor('total', 120) + projects.reduce((sum, col) => sum + widthFor(col.key, 140), 0);
-  });
 </script>
+
 
 <style scoped>
   .progress-fill-radios {
